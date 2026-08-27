@@ -1,0 +1,17 @@
+[
+  {
+    "topic": "秋招穿搭",
+    "expected_traits": ["口语化", "emoji", "短句"],
+    "forbidden": ["综上所述", "IaaS", "PoC"]
+  },
+  {
+    "topic": "考研英语复习方法",
+    "expected_traits": ["口语化", "emoji", "互动引导"],
+    "forbidden": ["综上所述", "IaaS"]
+  },
+  {
+    "topic": "租房避坑指南",
+    "expected_traits": ["口语化", "短句"],
+    "forbidden": ["综上所述", "PoC"]
+  }
+]

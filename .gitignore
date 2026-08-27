@@ -1,0 +1,29 @@
+# 凭据与敏感信息（切勿提交）
+storage_state.json
+*.key
+.env
+
+# 运行时产物
+publish_log.json
+eval_results.csv
+logs/
+.tmp/
+.tmp_*
+pxtest_*/
+probe_*/
+px2_*/
+pytest-cache-files-*/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
