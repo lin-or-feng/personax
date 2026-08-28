@@ -1,7 +1,7 @@
 [project]
 name = "personax"
-version = "0.1.0"
-description = "基于 LangGraph × Harness × Skill 的小红书内容生成 Agent"
+version = "1.0.0"
+description = "基于 LangGraph × Harness × Skill 的小红书内容生成与自动发布 Agent"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0.0",
