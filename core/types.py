@@ -34,6 +34,7 @@ class ExecutionContext(BaseModel):
     checkpoint: dict[str, Any] = Field(default_factory=dict)
     prompts: dict[str, Any] = Field(default_factory=dict)          # 提示词资产
     rag_examples: list[str] = Field(default_factory=list)          # RAG 召回样例（正文参考）
+    web_context: str = ""                                          # 联网热点/参考（正文时效性）
 
 
 class PublishResult(BaseModel):

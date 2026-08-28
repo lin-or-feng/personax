@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -94,12 +95,22 @@ def parse_tags(text: str) -> list[str]:
     return out
 
 
+def _md_table(headers: list[str], rows: list[list]) -> str:
+    """无 pandas 的表格渲染（避免 numpy/pandas 版本不兼容崩溃）"""
+    lines = ["| " + " | ".join(str(h) for h in headers) + " |",
+             "|" + "---|" * len(headers)]
+    for r in rows:
+        cells = [str(c).replace("|", "/")[:80] for c in r]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
 # ---------- 会话状态 ----------
 
 def init_state():
     s = st.session_state
     s.setdefault("draft", None)          # 当前草稿 Draft
-    s.setdefault("topic", "秋招穿搭")
+    s.setdefault("topic", "")            # 笔记主题（默认空，让用户输入）
     s.setdefault("check_result", None)   # 检验报告 dict
     s.setdefault("pub_confirm", False)   # 真实发布二次确认
     s.setdefault("pub_msg", "")
@@ -120,7 +131,7 @@ with st.sidebar:
     st.divider()
     st.caption(f"内容库: `content_bank/`\n\n发布留痕: `publish_log.json`")
     st.caption(f"登录态: {'✅ 已就绪' if STATE_PATH.exists() else '⚠️ 未登录（发布前需先登录）'}")
-    if st.button("🔁 重置当前草稿", use_container_width=True):
+    if st.button("🔁 重置当前草稿", width="stretch"):
         st.session_state.draft = None
         st.session_state.check_result = None
         st.session_state.pub_confirm = False
@@ -133,30 +144,89 @@ with st.sidebar:
 if page == "📝 生成与编辑":
     st.header("📝 生成 · 编辑 · 检验 · 发布")
 
-    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
-    topic = c1.text_input("笔记主题", st.session_state.topic)
-    gen_model = c2.selectbox("模型", ["deepseek-chat", "deepseek-reasoner"])
-    gen_temp = c3.slider("温度", 0.0, 1.5, 0.8, 0.1)
-    from core.persona import list_personas
+    # ---- 模型后端 + 模型切换（默认本地 Ollama，免费） ----
+    from core.llm import _backend, _ollama_reachable
+    be1, be2, be3 = st.columns([2, 2, 1])
+    default_be = "ollama（本地免费）" if _backend() == "ollama" else "deepseek（云端）"
+    backend_ch = be1.selectbox(
+        "模型后端",
+        ["ollama（本地免费）", "deepseek（云端）", "offline（离线模板）"],
+        index=0 if default_be.startswith("ollama") else 1,
+        help="ollama=本地免费生成（需已运行 Ollama）；deepseek=云端（需 .env 填 Key）；offline=不调模型用模板")
+    if backend_ch.startswith("ollama"):
+        model_choices = ["qwen2.5:7b", "qwen2.5:3b", "qwen2.5:14b", "glm4:9b", "deepseek-r1:7b"]
+        backend_key = "ollama"
+    elif backend_ch.startswith("deepseek"):
+        model_choices = ["deepseek-chat", "deepseek-reasoner"]
+        backend_key = "deepseek"
+    else:
+        model_choices = ["离线模板"]
+        backend_key = "offline"
+    gen_model = be2.selectbox("模型", model_choices)
+    gen_temp = be3.slider("温度", 0.0, 1.5, 0.8, 0.1)
+    from core.websearch import _enabled as ws_enabled
+    st.caption(f"🌐 联网：{'✅ 开' if ws_enabled() else '⏸ 关'}（⚙️ 设置页可切换）　"
+               f"🎨 封面：发布时自动生成")
+
+    # 未配 Key 时给清晰提示（而不是报错）
+    if backend_key == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
+        st.warning("⚠️ 未检测到 DEEPSEEK_API_KEY：请在项目根目录 `.env` 填写 Key，"
+                   "或改选「ollama（本地免费）」后端（不用 Key、不花钱）。")
+
+    c1, c2 = st.columns([3, 1])
+    topic = c1.text_input("笔记主题", st.session_state.topic,
+                          placeholder="请输入笔记主题，如：秋招穿搭")
+    from core.persona import list_personas, suggest_persona
     persona_names = ["默认(persona.yaml)"] + list_personas()
-    gen_persona = c4.selectbox("人格", persona_names, index=0,
-                               help="选哪个就用哪个语气生成；可到「⚙️ 设置 → 人设库」创建/编辑人格")
+    rec_persona = suggest_persona(topic)
+
+    # ---- 自动推荐人格：主题变了自动选推荐，可手动切换回来 ----
+    st.session_state.setdefault("auto_persona", True)
+    auto_on = c1.checkbox("✨ 自动按主题推荐人格", key="auto_persona",
+                          help="勾选：改主题自动选推荐人格；取消或手动选＝用你选的")
+    sel_key = "persona_choice"
+    st.session_state.setdefault(sel_key, "默认(persona.yaml)")
+    if auto_on and topic != st.session_state.get("last_topic", ""):
+        # 主题变化 → 自动切到推荐人格
+        st.session_state[sel_key] = rec_persona or "默认(persona.yaml)"
+        st.session_state.last_topic = topic
+
+    bp1, bp2 = st.columns([3, 1])
+
+    def _apply_recommended():
+        # 回调在组件实例化前执行，允许修改 selectbox 的 session state
+        st.session_state[sel_key] = rec_persona or "默认(persona.yaml)"
+        st.session_state.last_topic = topic
+
+    gen_persona = bp1.selectbox("人格（可手动切换）", persona_names, key=sel_key,
+                                help="选哪个就用哪个语气生成；可到「⚙️ 设置 → 人设库」创建/编辑人格")
+    bp2.button("↩️ 回到推荐", use_container_width=True, on_click=_apply_recommended,
+               disabled=not rec_persona or rec_persona == gen_persona)
+    if rec_persona and gen_persona == rec_persona:
+        st.caption(f"💡 已自动选择推荐人格：**{rec_persona}**（想换就手动选，或点「↩️ 回到推荐」）")
+    elif rec_persona:
+        st.caption(f"💡 推荐人格：**{rec_persona}**（你当前手动选择了 {gen_persona}）")
     st.session_state.topic = topic
 
-    if st.button("✨ 生成发布内容", type="primary", use_container_width=True):
-        llm_configure(model=gen_model, temperature=gen_temp)
-        chose = None if gen_persona.startswith("默认") else gen_persona
-        orch, _ = build_orch(chose)
-        with st.spinner(f"生成中（{chose or '默认人格'}）…"):
-            try:
-                draft = orch.run(topic=topic, user_id="web_user", skill_chain=default_chain(topic))
-                st.session_state.draft = draft
-                st.session_state.check_result = None
-                st.session_state.pub_confirm = False
-                st.session_state.gen_ts += 1   # 换 key，让编辑框展示新草稿
-                st.success("生成完成，可在下方编辑")
-            except Exception as e:  # noqa: BLE001
-                st.error(f"生成失败: {e}")
+    if st.button("✨ 生成发布内容", type="primary", width="stretch"):
+        if not (topic or "").strip():
+            st.warning("⚠️ 请先输入笔记主题（如：秋招穿搭）")
+        else:
+            llm_configure(backend=backend_key,
+                          model=None if backend_key == "offline" else gen_model,
+                          temperature=gen_temp)
+            chose = None if gen_persona.startswith("默认") else gen_persona
+            orch, _ = build_orch(chose)
+            with st.spinner(f"生成中（{backend_key} / {chose or '默认人格'}）…"):
+                try:
+                    draft = orch.run(topic=topic, user_id="web_user", skill_chain=default_chain(topic))
+                    st.session_state.draft = draft
+                    st.session_state.check_result = None
+                    st.session_state.pub_confirm = False
+                    st.session_state.gen_ts += 1   # 换 key，让编辑框展示新草稿
+                    st.success("生成完成，可在下方编辑")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"生成失败: {e}")
 
     st.divider()
 
@@ -179,7 +249,7 @@ if page == "📝 生成与编辑":
             preview = st.text_area("👀 预览", f"{title}\n\n{body}\n\n{fmt_tags(parse_tags(tags))}",
                                    height=200, disabled=True)
 
-        if st.button("💾 应用编辑", use_container_width=True):
+        if st.button("💾 应用编辑", width="stretch"):
             draft.title = title
             draft.body = body
             draft.tags = parse_tags(tags)
@@ -189,11 +259,34 @@ if page == "📝 生成与编辑":
             st.session_state.check_result = None
             st.success("已应用编辑，可继续「检验」")
 
+        # ---- 封面生成（多模态 · 描述驱动） ----
+        cover_desc = st.text_input("🎨 封面描述（可选，按你的描述生成）",
+                                   (st.session_state.draft.metadata or {}).get("cover_desc", "")
+                                   if st.session_state.draft else "",
+                                   placeholder="如：粉色渐变 可爱风 / 深色高级感 金色线条 / 简约留白 黑白")
+        if st.button("🎨 按描述生成封面", type="secondary", width="stretch",
+                     help="填写描述后点此生成；不填则用当前风格自动生成"):
+            from core.covergen import ensure_cover_for_draft
+            draft = st.session_state.draft
+            if draft is None or not (draft.title or "").strip():
+                st.warning("请先生成/填写标题，再生成封面")
+            else:
+                draft.metadata["cover_desc"] = cover_desc.strip() or None
+                cover = ensure_cover_for_draft(draft)
+                if cover:
+                    st.session_state.draft = draft
+                    st.session_state.cover_preview = cover
+                    st.success("封面已生成 ✅（发布时自动上传，界面已预览）")
+                else:
+                    st.warning("生成封面失败")
+        if st.session_state.get("cover_preview"):
+            st.image(st.session_state.cover_preview, caption="当前封面预览（发布自动上传）", width=300)
+
         st.divider()
 
         ck1, ck2, ck3 = st.columns(3)
         # ---- 检验 ----
-        if ck1.button("🔍 检验（合规+风格+就绪）", use_container_width=True):
+        if ck1.button("🔍 检验（合规+风格+就绪）", width="stretch"):
             draft = st.session_state.draft
             comp = compliance().check_draft(draft)
             style = StyleEnforcer(load_persona()).enforce(draft)
@@ -224,12 +317,14 @@ if page == "📝 生成与编辑":
         pub_c1, pub_c2, pub_c3 = st.columns([1, 1, 1])
         browser_ch = pub_c1.selectbox("浏览器", ["msedge", "chrome", "chromium"], index=0,
                                       help="系统 Edge/Chrome 免下载；chromium 需已装 Playwright 内核")
-        if pub_c2.button("🧪 干跑发布（不真发）", use_container_width=True):
+        headed_mode = pub_c1.checkbox("有头模式（弹出窗口，可扫码验证）", value=False,
+                                      help="小红书风控要求扫码验证时勾选此项：会弹出浏览器，你用小红书APP扫码后发布")
+        if pub_c2.button("🧪 干跑发布（不真发）", width="stretch"):
             draft = st.session_state.draft
             r = DryRunPublisher().publish(draft)
             st.info(f"{r.message}（{r.cost_ms}ms）")
 
-        if pub_c3.button("🚀 真实发布", use_container_width=True, type="primary",
+        if pub_c3.button("🚀 真实发布", width="stretch", type="primary",
                          disabled=not STATE_PATH.exists()):
             if not st.session_state.pub_confirm:
                 st.session_state.pub_confirm = True
@@ -238,7 +333,7 @@ if page == "📝 生成与编辑":
                 draft = st.session_state.draft
                 orch, _ = build_orch()
                 pub = XhsPlaywrightPublisher(
-                    storage_state=str(STATE_PATH), headless=True,
+                    storage_state=str(STATE_PATH), headless=not headed_mode,
                     channel=None if browser_ch == "chromium" else browser_ch,
                     auto_approve=True, harness=orch.harness, user_id="web_user",
                 )
@@ -246,6 +341,9 @@ if page == "📝 生成与编辑":
                 with st.spinner("发布中…（上传图文 → 填内容 → 点发布）"):
                     try:
                         r = pub.publish(draft)
+                        # 前端展示浏览器检测/切换原因（如「未装 Chrome，已切 Edge」）
+                        for n in getattr(pub, "browser_notes", []):
+                            st.warning(f"⚠️ {n}")
                         if r.success:
                             st.success(f"✅ {r.message}")
                             PublishLog(path=str(LOG_PATH)).load().record(
@@ -259,12 +357,13 @@ if page == "📝 生成与编辑":
                 st.session_state.pub_confirm = False
 
         # 核对已发布笔记（调用 notes 命令，界面直接看结果）
-        if st.button("🗂️ 核对已发布笔记", use_container_width=True):
+        if st.button("🗂️ 核对已发布笔记", width="stretch"):
             with st.spinner("打开笔记管理核对…"):
-                proc = subprocess.run(
-                    [sys.executable, "main.py", "notes",
-                     f"--browser={browser_ch}" if browser_ch != "chromium" else ""],
-                    cwd=str(BASE), capture_output=True, text=True, encoding="utf-8")
+                notes_args = [sys.executable, "main.py", "notes"]
+                if browser_ch != "chromium":
+                    notes_args.append(f"--browser={browser_ch}")
+                proc = subprocess.run(notes_args, cwd=str(BASE),
+                                      capture_output=True, text=True, encoding="utf-8")
             st.code(proc.stdout[-1200:] or proc.stderr[-800:])
 
         if not STATE_PATH.exists():
@@ -344,7 +443,7 @@ elif page == "🗓️ 内容库与定时":
     st.divider()
     st.subheader("⏰ 执行定时任务")
     e1, e2 = st.columns(2)
-    if e1.button("▶️ 执行到期任务（干跑）", use_container_width=True):
+    if e1.button("▶️ 执行到期任务（干跑）", width="stretch"):
         orch, persona = build_orch()
         sched = PublishScheduler(orchestrator=orch, publisher=DryRunPublisher(),
                                  compliance=compliance(), bank=bank,
@@ -355,7 +454,7 @@ elif page == "🗓️ 内容库与定时":
         for r in report:
             st.write(f"`[{r['id']}]` {r['topic']} → **{r['status']}**：{r.get('reason', r.get('url', ''))}")
         st.rerun()
-    if e2.button("🚀 执行到期任务（真实发布，需已登录）", use_container_width=True,
+    if e2.button("🚀 执行到期任务（真实发布，需已登录）", width="stretch",
                  disabled=not STATE_PATH.exists()):
         orch, persona = build_orch()
         pub = XhsPlaywrightPublisher(storage_state=str(STATE_PATH), headless=True,
@@ -419,7 +518,7 @@ elif page == "📚 知识库":
         c1.caption(f"**{topic or f.stem}** ｜ `{f.name}` ｜ {len(content)} 字")
         with st.expander("查看/复制这篇范例"):
             st.text(content)
-        if c2.button("🗑️ 删除", key=f"kbdel_{f.stem}", use_container_width=True):
+        if c2.button("🗑️ 删除", key=f"kbdel_{f.stem}", width="stretch"):
             f.unlink(missing_ok=True)
             st.rerun()
 
@@ -502,6 +601,41 @@ elif page == "⚙️ 设置":
         st.success(f"已套用「{preset_name}」，可在下方微调")
 
     st.divider()
+
+    # ---------- 联网增强开关 ----------
+    st.subheader("🌐 联网增强（生成前抓热点/参考）")
+    from core.websearch import configure as ws_configure, _enabled as ws_enabled, _backend as ws_backend
+    st.session_state.setdefault("ws_on", ws_enabled())
+    st.session_state.setdefault("ws_be", ws_backend() if ws_backend() in ("bing", "bocha", "tavily") else "bing")
+    ws_on = st.checkbox("开启联网（每篇多花 3-8 秒；搜到相关内容才注入，搜不到不影响）",
+                        key="ws_on")
+    be_idx = ["bing", "bocha", "tavily"].index(st.session_state.ws_be) \
+        if st.session_state.ws_be in ("bing", "bocha", "tavily") else 0
+    ws_be = st.selectbox("联网后端", ["bing", "bocha", "tavily"], index=be_idx, key="ws_be",
+                         help="bing=免费免Key；bocha/tavily 需在 .env 配 BOCHA_API_KEY / TAVILY_API_KEY")
+    # 每次渲染同步到运行时（界面改即生效，不用重启、不用改 .env）
+    ws_configure(enabled=ws_on, backend=ws_be)
+    st.caption(f"当前：{'✅ 已开启（' + ws_be + '）' if ws_on else '⏸ 已关闭'} —— 生成页立即可用")
+
+    st.divider()
+
+    # ---------- 封面设置 ----------
+    st.subheader("🎨 封面设置（多模态）")
+    from core.covergen import configure as cg_configure, _style as cg_style, _ai_enabled as cg_ai
+    st.session_state.setdefault("cover_style", cg_style())
+    st.session_state.setdefault("cover_ai", cg_ai())
+    cover_opts = ["premium（高级暗调）", "minimal（留白极简）",
+                  "gradient（渐变大字）", "split（撞色几何）", "card（复古卡片）"]
+    style_idx = next((i for i, o in enumerate(cover_opts)
+                      if o.startswith(st.session_state.cover_style)), 0)
+    cover_style = st.selectbox("封面风格（同主题保持一致的风格）", cover_opts,
+                               index=style_idx, key="cover_style")
+    cover_ai = st.checkbox("用 AI 背景生成封面（需在 .env 配 SILICONFLOW_API_KEY；无 Key 自动回退海报）",
+                           key="cover_ai")
+    cg_configure(style=cover_style.split("（")[0], ai_enabled=cover_ai)
+    st.caption("发布时若稿件无图，会自动按此风格生成标题封面。")
+
+    st.divider()
     st.subheader("📄 persona.yaml（人格 + 生成参数 + 规则）")
     yaml_text = st.text_area("内容格式配置（直接编辑 YAML）", PERSONA_PATH.read_text(encoding="utf-8"),
                              height=420, key="persona_yaml")
@@ -538,7 +672,8 @@ else:
         st.info("暂无发布记录")
     else:
         rows = [{"id": k, **v} for k, v in log.records.items()]
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.markdown(_md_table(["id", "status", "url", "ts"],
+                              [[str(r.get(k, "")) for k in ("id", "status", "url", "ts")] for r in rows]))
 
     st.subheader("🗂️ 内容库概览")
     bank = ContentBank(str(BANK_DIR))
@@ -546,17 +681,15 @@ else:
     if not items:
         st.info("内容库为空")
     else:
-        now = datetime.now()
         rows = []
         for it in items:
             rec = log.records.get(it.id, {})
-            rows.append({
-                "id": it.id, "topic": it.topic,
-                "scheduled_at": it.scheduled_at.strftime(TIME_FMT) if it.scheduled_at else "-",
-                "status": rec.get("status", "待发布"),
-                "url": rec.get("url", ""),
-            })
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+            rows.append([
+                it.id, it.topic,
+                it.scheduled_at.strftime(TIME_FMT) if it.scheduled_at else "-",
+                rec.get("status", "待发布"), rec.get("url", ""),
+            ])
+        st.markdown(_md_table(["id", "topic", "scheduled_at", "status", "url"], rows))
 
     st.subheader("🧪 评测")
     if st.button("▶️ 运行评测（eval/scorer.py → eval_results.csv）"):

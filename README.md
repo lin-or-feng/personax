@@ -169,6 +169,20 @@ python scripts/install_hooks.py
 > 校验规则与 `.gitignore` 同步：`.env`、`storage_state.json`、`logs/`、`publish_log.json` 等都会被识别为「已忽略、本地安全」，不会误报。
 > ⚠️ **如果 Key 曾在任何渠道泄露过**（如聊天记录/截图），请到 [platform.deepseek.com](https://platform.deepseek.com) **删除重建**，新 Key 只放 `.env`。
 
+## 💰 省钱方案（生成太花钱？）
+
+每篇笔记会调 4 次 LLM（标题/正文/标签/封面），按性价比排序：
+
+| 方案 | 成本 | 做法 | 质量 |
+|---|---|---|---|
+| **① 本地 Ollama（推荐）** | **0 元** | `.env` 加 `LLM_BACKEND=ollama`，先 `ollama pull qwen2.5:7b`；模型用 `LLM_MODEL=qwen2.5:7b` | 良好（本地 7B） |
+| ② 云端便宜模型 | 极低 | 界面**别选 deepseek-reasoner**（贵 4-5 倍）；deepseek-chat 每篇约 1 分钱 | 好 |
+| ③ 免费额度模型 | 0 元 | 智谱 GLM-4-Flash 免费：`.env` 设 `DEEPSEEK_BASE_URL` 换 OpenAI 兼容端点 | 中等 |
+| ④ 省 token | — | 标题候选已 3 个；`generation.max_tokens` 可调小；已有内容的稿件不重复生成（调度器已做） | — |
+
+> 已内置：`LLM_BACKEND=ollama` 自动走本地（无需 Key），默认 `qwen2.5:7b`（`LLM_MODEL` 可改），
+> 输出上限自动降到 512 token；可视化界面模型下拉随后端切换。
+
 ## ⚠️ 已知限制（Roadmap）
 
 - 话题「话题芯片」暂未自动添加（网页编辑器话题面板交互复杂，标签以 `#文本` 留正文，可在 App 补加）

@@ -73,10 +73,80 @@ def resolve_persona(
     for k in _IDENTITY_KEYS:
         if k in persona:
             merged[k] = persona[k]
+    # 扩展人格字段（标题风格/开头/互动/适用主题/示例等）一并合并
+    for k in ("title_style", "opening", "interaction", "topics", "example", "rules"):
+        if k in persona:
+            merged[k] = persona[k]
     # 生成参数允许人设覆盖（深合并）
     if isinstance(persona.get("generation"), dict):
         merged["generation"] = {**(base.get("generation") or {}), **persona["generation"]}
     return merged
+
+
+def build_persona_block(persona: dict) -> str:
+    """把人格配置编译成一段「写作指令」，注入提示词让模型稳定模仿。
+
+    例：
+        你的人设：小鹿学姐，温暖闺蜜风，面向学生党/年轻女性
+        语气：warm_girly
+        写作习惯：每3句一个emoji；结尾常用"冲鸭"…
+        开头风格：痛点共鸣式（"谁懂啊"）
+        互动引导：提问 + 求收藏
+        标题风格：数字/悬念/人群词 + 1个emoji
+        句长偏好：short（每句≤45字）
+        禁用：书面语"综上所述"…
+        风格示例：家人们谁懂啊……
+    """
+    parts: list[str] = []
+    name = persona.get("name") or "博主"
+    desc = persona.get("description") or ""
+    parts.append(f"你的人设：{name}" + (f"，{desc}" if desc else ""))
+    if persona.get("tone"):
+        parts.append(f"语气：{persona['tone']}")
+    habits = persona.get("habits") or []
+    if habits:
+        parts.append("写作习惯：" + "；".join(str(h) for h in habits))
+    if persona.get("opening"):
+        parts.append(f"开头风格：{persona['opening']}")
+    if persona.get("interaction"):
+        parts.append(f"互动引导：{persona['interaction']}")
+    if persona.get("title_style"):
+        parts.append(f"标题风格：{persona['title_style']}")
+    sl = persona.get("sentence_length")
+    if sl:
+        parts.append(f"句长偏好：{sl}（短句≤45字、中句≤90字）")
+    forbidden = persona.get("forbidden") or []
+    if forbidden:
+        parts.append("禁用：" + "、".join(str(f) for f in forbidden))
+    rules = persona.get("rules") or []
+    if isinstance(rules, str):
+        rules = [rules]
+    for r in rules:
+        parts.append(f"额外规则：{r}")
+    if persona.get("example"):
+        parts.append(f"风格示例：{persona['example']}")
+    return "\n".join(p for p in parts if p)
+
+
+def suggest_persona(topic: str, path: str | Path = PERSONAS_PATH) -> str | None:
+    """按主题推荐人格（匹配 personas.yaml 里各人格的 topics 关键词）。
+
+    打分 = 命中关键词长度之和（越长越具体，避免「面试」这类泛词打平）。
+    """
+    data = _load_yaml(path)
+    if not isinstance(data, dict):
+        return None
+    best, best_score = None, 0
+    for name, p in data.items():
+        if not isinstance(p, dict):
+            continue
+        topics = p.get("topics") or []
+        if isinstance(topics, str):
+            topics = [topics]
+        score = sum(len(str(t)) for t in topics if str(t) and str(t) in topic)
+        if score > best_score:
+            best, best_score = name, score
+    return best if best_score > 0 else None
 
 
 def add_persona(

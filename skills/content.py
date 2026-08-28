@@ -7,6 +7,7 @@
 - 离线降级防垃圾：过滤"占位"输出，长度超限自动截断
 """
 from __future__ import annotations
+import re
 from core.registry import Skill, register
 from core.types import SkillInput, SkillOutput
 from core.llm import complete, build_system_prompt
@@ -22,10 +23,26 @@ def _tpl(inp: SkillInput, key: str) -> dict:
     return prompts.get(key) or DEFAULT_PROMPTS.get(key, {})
 
 
+def _persona_short(persona: dict) -> str:
+    """精简人格（标题用）：只给身份/语气/标题风格，不给示例，防止模型照抄示例句"""
+    parts = []
+    name = persona.get("name") or "博主"
+    desc = persona.get("description") or ""
+    parts.append(f"你是{name}" + (f"（{desc}）" if desc else ""))
+    if persona.get("tone"):
+        parts.append(f"语气：{persona['tone']}")
+    if persona.get("title_style"):
+        parts.append(f"标题风格：{persona['title_style']}")
+    forbidden = persona.get("forbidden") or []
+    if forbidden:
+        parts.append("禁用：" + "、".join(str(f) for f in forbidden))
+    return "；".join(parts)
+
+
 def _persona_line(persona: dict) -> str:
-    name = persona.get("name", "")
-    desc = persona.get("description", "")
-    return "、".join(x for x in (name, desc) if x)
+    """人格 → 提示词指令块（含开头/互动/标题风格等，让模型稳定模仿）"""
+    from core.persona import build_persona_block
+    return build_persona_block(persona)
 
 
 def _gen_kwargs(inp: SkillInput) -> dict:
@@ -82,6 +99,45 @@ def _depure_markdown(text: str) -> str:
     return text
 
 
+# emoji/符号区（含变体选择符、组合框符）
+_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2190-\u21FF\u2B05-\u2B07]"
+)
+
+
+def _sanitize_body(text: str, max_emoji: int = 6) -> str:
+    """清洗小模型常见输出问题：组合 emoji（①⃣）、带圈数字、段标签、emoji 泛滥。
+
+    - 去掉变体选择符 U+FE0F 与组合框符 U+20E3（①⃣ → ①）
+    - 去掉带圈数字 ①-⑳ 与 keycap 残留
+    - 去掉「段一：」这类小节标签行
+    - emoji 数量超过上限时删除多余
+    - 合并多余空行
+    """
+    text = text.replace("\uFE0F", "").replace("\u20E3", "")
+    text = re.sub(r"[\u2460-\u24FF]", "", text)
+    # 段标签：独立行整行删；行内前缀（段一：xxx）删前缀保留内容
+    text = re.sub(r"(?m)^\s*段[一二三四五六七八九十\d]+\s*[:：]?\s*$", "", text)
+    text = re.sub(r"(?m)^\s*段[一二三四五六七八九十\d]+\s*[:：]\s*", "", text)
+    # 去括号内单独 emoji（(🔍) 这种模型爱加的）
+    text = re.sub(r"（([\U0001F000-\U0001FAFF\u2600-\u27BF])\）", r"\1", text)
+    text = re.sub(r"\(([\U0001F000-\U0001FAFF\u2600-\u27BF])\)", r"\1", text)
+    # emoji 数量上限
+    emojis = _EMOJI_RE.findall(text)
+    if len(emojis) > max_emoji:
+        kept = 0
+        out = []
+        for ch in text:
+            if _EMOJI_RE.match(ch):
+                if kept >= max_emoji:
+                    continue
+                kept += 1
+            out.append(ch)
+        text = "".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 @register
 class TitleGenerator(Skill):
     name = "title_generator"
@@ -94,12 +150,12 @@ class TitleGenerator(Skill):
         persona = inp.context.get("persona", {})
         tpl = _tpl(inp, "title")
         prompt = tpl.get("user", DEFAULT_PROMPTS["title"]["user"]).format(
-            topic=draft.topic, persona=_persona_line(persona))
+            topic=draft.topic, persona=_persona_short(persona))
         text = complete(prompt, system=build_system_prompt(persona), **_gen_kwargs(inp))
         lines = _clean_lines(text)
         chosen = next((l for l in lines if len(l) <= TITLE_MAX), None) or (
             lines[0] if lines else None) or f"{draft.topic}分享🍃"
-        draft.title = chosen[:TITLE_MAX]
+        draft.title = _sanitize_body(chosen[:TITLE_MAX], max_emoji=2) or f"{draft.topic}分享🍃"
         return SkillOutput(draft=draft, notes=[f"生成{len(lines)}个候选标题"])
 
 
@@ -142,11 +198,13 @@ class BodyWriter(Skill):
         persona = inp.context.get("persona", {})
         tpl = _tpl(inp, "body")
         rag = _fmt_examples(inp.context.get("rag_examples"))
+        web = str(inp.context.get("web_context") or "")
         prompt = tpl.get("user", DEFAULT_PROMPTS["body"]["user"]).format(
             topic=draft.topic,
             title=draft.title or "无",
             persona=_persona_line(persona),
             rag_context=rag,
+            web_context=web,
         )
         text = complete(prompt, system=build_system_prompt(persona), **_gen_kwargs(inp))
         if not text.strip() or "占位" in text:
@@ -159,7 +217,7 @@ class BodyWriter(Skill):
                 f"动手练才是王道，光收藏等于没学。💡\n\n"
                 f"你们有什么好方法？评论区一起交流呀。冲鸭🍃"
             )
-        draft.body = _depure_markdown(text).strip()
+        draft.body = _sanitize_body(_depure_markdown(text))
         return SkillOutput(draft=draft, notes=[f"正文已生成（RAG范例{len(inp.context.get('rag_examples') or [])}条）"])
 
 

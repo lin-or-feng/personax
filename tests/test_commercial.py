@@ -201,6 +201,22 @@ class TestSkillsQuality:
         assert out.draft.title and len(out.draft.title) <= 20
 
 
+# ---------- 浏览器自动回退 ----------
+
+class TestBrowserFallback:
+    def test_browser_order(self):
+        from publishers.xhs import _browser_order
+        assert _browser_order("chrome") == ["chrome", "msedge", None]
+        assert _browser_order("msedge") == ["msedge", None]
+        # 不指定浏览器时：优先 Edge（Windows 自带），再回退内置 Chromium
+        assert _browser_order(None) == ["msedge", None]
+
+    def test_browser_exe_paths_known(self):
+        from publishers.xhs import _browser_exe_paths
+        assert isinstance(_browser_exe_paths("chrome"), list)
+        assert isinstance(_browser_exe_paths("msedge"), list)
+
+
 # ---------- 多人格库 ----------
 
 class TestPersonaLibrary:
@@ -229,6 +245,131 @@ class TestPersonaLibrary:
         add_persona("测试人格", {"name": "测试君", "tone": "fresh"}, p)
         assert "测试人格" in list_personas(p)
         assert get_persona("测试人格", p).get("name") == "测试君"
+
+
+# ---------- 联网增强 ----------
+
+class TestWebSearch:
+    def test_disabled_returns_empty(self, monkeypatch):
+        import os
+        os.environ["WEB_SEARCH_ENABLED"] = "0"
+        from core.websearch import search_web, build_web_context
+        assert search_web("秋招穿搭") == []
+        assert build_web_context("秋招穿搭") == ""
+
+    def test_off_backend_returns_empty(self, monkeypatch):
+        import os
+        os.environ["WEB_SEARCH_ENABLED"] = "1"
+        os.environ["WEB_SEARCH_BACKEND"] = "off"
+        from core.websearch import search_web
+        assert search_web("秋招穿搭") == []
+
+    def test_backend_switch(self, monkeypatch):
+        import os
+        os.environ["WEB_SEARCH_BACKEND"] = "bocha"
+        os.environ.pop("BOCHA_API_KEY", None)   # 无 Key → 空
+        from core.websearch import _search_bocha
+        assert _search_bocha("秋招穿搭", 3) == []
+
+    def test_build_web_context_format(self, monkeypatch):
+        # 模拟返回结果，验证格式化与相关性过滤
+        import os
+        os.environ["WEB_SEARCH_ENABLED"] = "1"
+        from core import websearch
+        monkeypatch.setattr(websearch, "search_web",
+                            lambda q, top_k=3: ["秋招穿搭 热点A：内容1", "面试穿搭 热点B：内容2"])
+        ctx = websearch.build_web_context("秋招穿搭")
+        assert "近期相关热点" in ctx and "热点A" in ctx
+        # 无结果 → 空串
+        monkeypatch.setattr(websearch, "search_web", lambda q, top_k=3: [])
+        assert websearch.build_web_context("秋招穿搭") == ""
+        # 无关结果被过滤 → 空串（防跑题）
+        monkeypatch.setattr(websearch, "search_web",
+                            lambda q, top_k=3: ["字典解释秋字的意思", "别的话题内容"])
+        assert websearch.build_web_context("秋招穿搭") == ""
+
+
+# ---------- 封面生成（多模态） ----------
+
+class TestCoverGen:
+    def test_generate_cover_png(self):
+        from core.covergen import generate_cover
+        from PIL import Image
+        p = generate_cover("秋招战袍穿对，offer翻倍", topic="秋招穿搭",
+                           out_dir=".tmp_covers")
+        im = Image.open(p)
+        assert im.size == (600, 800)
+        import shutil
+        shutil.rmtree(".tmp_covers", ignore_errors=True)
+
+    def test_ensure_cover_for_draft(self):
+        from core.covergen import ensure_cover_for_draft
+        from core.types import Draft
+        d = Draft(topic="秋招穿搭", title="秋招战袍穿对，offer翻倍")
+        path = ensure_cover_for_draft(d, out_dir=".tmp_covers")
+        assert path and d.metadata["cover"] == path
+        assert d.metadata["images"][0] == path
+        import shutil
+        shutil.rmtree(".tmp_covers", ignore_errors=True)
+
+    def test_no_title_no_cover(self):
+        from core.covergen import ensure_cover_for_draft
+        from core.types import Draft
+        d = Draft(topic="无标题")
+        assert ensure_cover_for_draft(d) is None
+
+    def test_all_styles(self):
+        from core.covergen import generate_cover, configure
+        from PIL import Image
+        import shutil
+        for s in ("premium", "minimal", "gradient", "split", "card"):
+            configure(style=s)
+            p = generate_cover("风格测试标题", topic="测试", out_dir=".tmp_covers")
+            assert Image.open(p).size == (600, 800)
+        configure(style="premium")   # 复位默认
+        shutil.rmtree(".tmp_covers", ignore_errors=True)
+
+    def test_ai_fallback_without_key(self):
+        from core.covergen import generate_cover, configure
+        import os
+        os.environ.pop("SILICONFLOW_API_KEY", None)
+        configure(ai_enabled=True)
+        p = generate_cover("AI回退测试", topic="测试")
+        assert p.exists()   # 无 Key 自动回退本地海报
+
+    def test_description_driven(self):
+        from core.covergen import generate_cover, configure, _parse_style_desc
+        from PIL import Image
+        import shutil
+        configure(style="gradient")
+        # 描述「粉色渐变 可爱风」→ 粉色 + 渐变
+        parsed = _parse_style_desc("粉色渐变 可爱风")
+        assert parsed["style"] == "gradient" and parsed["palette"] is not None
+        p = generate_cover("描述测试", topic="测试", out_dir=".tmp_covers",
+                           description="粉色渐变 可爱风")
+        assert Image.open(p).size == (600, 800)
+        # 描述「深色高级感 金色线条」→ premium
+        parsed2 = _parse_style_desc("深色高级感 金色线条")
+        assert parsed2["style"] == "premium"
+        # 空描述 → 不解析
+        assert _parse_style_desc("") == {}
+        shutil.rmtree(".tmp_covers", ignore_errors=True)
+
+    def test_build_persona_block(self):
+        from core.persona import build_persona_block
+        p = {"name": "小鹿学姐", "tone": "warm_girly",
+             "habits": ["短句优先"], "opening": "痛点共鸣", "interaction": "求收藏",
+             "title_style": "数字+emoji", "example": "家人们谁懂啊"}
+        block = build_persona_block(p)
+        assert "你的人设：小鹿学姐" in block
+        assert "开头风格：痛点共鸣" in block and "互动引导：求收藏" in block
+        assert "风格示例：家人们谁懂啊" in block
+
+    def test_suggest_persona(self):
+        from core.persona import suggest_persona
+        assert suggest_persona("考研英语复习方法") == "干货知识风"
+        assert suggest_persona("面试被问缺点怎么答") == "职场进阶风"
+        assert suggest_persona("随便聊聊") is None   # 无匹配不推荐
 
 
 # ---------- 发布器安全特性 ----------

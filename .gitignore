@@ -13,6 +13,7 @@ pxtest_*/
 probe_*/
 px2_*/
 pytest-cache-files-*/
+assets/covers/
 
 # Python
 __pycache__/

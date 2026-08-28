@@ -32,12 +32,18 @@ _load_project_env()
 _client: Optional[object] = None
 _OpenAI = None
 _RETRYABLE: tuple = ()
-_OVERRIDES: dict = {}   # 运行时覆盖（可视化界面设置模型/温度）
+_OVERRIDES: dict = {}   # 运行时覆盖（可视化界面设置后端/模型/温度）
+_OLLAMA_CHECK: dict = {"ts": 0.0, "ok": False}   # 本机 Ollama 可达性缓存（5s）
 
 
-def configure(*, model: str | None = None, temperature: float | None = None,
-              max_tokens: int | None = None):
-    """运行时覆盖生成参数（供可视化界面调用；不设置则用默认值）"""
+def configure(*, backend: str | None = None, model: str | None = None,
+              temperature: float | None = None, max_tokens: int | None = None):
+    """运行时覆盖生成参数（供可视化界面调用；不设置则用默认值）。
+
+    backend: "ollama"（本地免费）/ "deepseek"（云端）/ "offline"（模板）
+    """
+    if backend is not None:
+        _OVERRIDES["backend"] = backend.strip().lower()
     if model is not None:
         _OVERRIDES["model"] = model
     if temperature is not None:
@@ -46,9 +52,70 @@ def configure(*, model: str | None = None, temperature: float | None = None,
         _OVERRIDES["max_tokens"] = max_tokens
 
 
+def _ollama_reachable(timeout: float = 0.6) -> bool:
+    """检测本机 Ollama 是否在运行（缓存 5 秒）"""
+    import time as _t
+    if _t.time() - _OLLAMA_CHECK["ts"] < 5:
+        return _OLLAMA_CHECK["ok"]
+    try:
+        import socket
+        s = socket.create_connection(("127.0.0.1", 11434), timeout=timeout)
+        s.close()
+        _OLLAMA_CHECK.update(ts=_t.time(), ok=True)
+        return True
+    except OSError:
+        _OLLAMA_CHECK.update(ts=_t.time(), ok=False)
+        return False
+
+
+def _backend() -> str:
+    """当前 LLM 后端（优先级）：
+    1) 界面 configure(backend=...) 显式选择
+    2) 环境变量 LLM_BACKEND
+    3) 自动：有 DEEPSEEK_API_KEY → deepseek；否则本机 Ollama 在线 → ollama；否则 deepseek（走模板）
+    """
+    ov = _OVERRIDES.get("backend")
+    if ov:
+        return ov
+    b = os.getenv("LLM_BACKEND", "").strip().lower()
+    if b:
+        return b
+    if os.getenv("DEEPSEEK_API_KEY"):
+        return "deepseek"
+    return "ollama" if _ollama_reachable() else "deepseek"
+
+
+def _default_model() -> str:
+    """按后端返回默认模型名（可被 persona.generation.model 或界面覆盖）"""
+    if _backend() == "ollama":
+        return os.getenv("LLM_MODEL", "qwen2.5:7b")
+    return "deepseek-chat"
+
+
 def _get_client():
-    """返回 OpenAI 客户端；无 Key 返回 None。openai 未安装但设了 Key 时抛 LLMError。"""
+    """返回 OpenAI 兼容客户端；无可用后端返回 None（走本地模板）。"""
     global _client, _OpenAI, _RETRYABLE
+    backend = _backend()
+
+    if backend == "offline":
+        return None   # 强制模板（免费/离线）
+
+    if backend == "ollama":
+        # 本地免费生成：Ollama 的 OpenAI 兼容端点（无需 Key）
+        if _client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as e:
+                raise LLMError("已启用 LLM_BACKEND=ollama 但未安装 openai 库。请执行: pip install openai") from e
+            _OpenAI = OpenAI
+            _client = _OpenAI(
+                api_key="ollama",
+                base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+                timeout=float(os.getenv("DEEPSEEK_TIMEOUT", "120")),
+                max_retries=0,
+            )
+        return _client
+
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         return None
@@ -78,24 +145,30 @@ def _get_client():
 def complete(
     prompt: str,
     system: str = "",
-    model: str = "deepseek-chat",
+    model: str | None = None,
     temperature: float = 0.8,
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
 ) -> str:
     """统一 LLM 调用入口（带重试）。
 
-    - 有 DEEPSEEK_API_KEY：真实 DeepSeek；限流/超时/断连指数退避重试，其余错误直接抛 LLMError
-    - 无 Key：本地降级模板（仍遵循 Persona，便于离线演示完整链路）
+    后端优先级：LLM_BACKEND=ollama（本地免费）> DEEPSEEK_API_KEY（云端）> 本地模板（免费）。
+    模型默认值随后端变化；persona.generation.model 或界面 configure() 可覆盖。
     """
     client = _get_client()
     if client is None:
         return _local_fallback(prompt, system)
 
-    model = _OVERRIDES.get("model", model)
+    # 模型解析：Ollama 后端 → 用 LLM_MODEL（忽略 persona 里的 deepseek-chat）；
+    # 云端 → 界面 configure() > persona.generation.model > deepseek-chat
+    if _backend() == "ollama":
+        model = _OVERRIDES.get("model") or os.getenv("LLM_MODEL") or "qwen2.5:7b"
+        max_tokens = min(_OVERRIDES.get("max_tokens") or max_tokens or 512, 800)
+    else:
+        model = _OVERRIDES.get("model") or model or _default_model()
+        max_tokens = _OVERRIDES.get("max_tokens") or max_tokens or 1024
     temperature = _OVERRIDES.get("temperature", temperature)
-    max_tokens = _OVERRIDES.get("max_tokens", max_tokens)
 
     messages = []
     if system:

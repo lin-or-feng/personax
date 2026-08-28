@@ -84,6 +84,70 @@ class PublishUnconfirmed(Exception):
     """点击发布后未检测到成功证据（不返回假成功）"""
 
 
+def _browser_exe_paths(channel: str) -> list[Path]:
+    """返回指定浏览器通道的常见安装路径（存在的）"""
+    pf = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
+    pf86 = Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"))
+    local = Path(os.environ.get("LOCALAPPDATA", ""))
+    if channel == "chrome":
+        cands = [pf / "Google/Chrome/Application/chrome.exe",
+                 pf86 / "Google/Chrome/Application/chrome.exe",
+                 local / "Google/Chrome/Application/chrome.exe"]
+    elif channel == "msedge":
+        cands = [pf86 / "Microsoft/Edge/Application/msedge.exe",
+                 pf / "Microsoft/Edge/Application/msedge.exe"]
+    else:
+        return []
+    return [c for c in cands if c.exists()]
+
+
+def _browser_order(channel: str | None) -> list[str | None]:
+    """浏览器尝试顺序：指定 → msedge → 内置 chromium"""
+    order: list[str | None] = []
+    if channel:
+        order.append(channel)
+    if channel != "msedge":
+        order.append("msedge")
+    order.append(None)
+    return order
+
+
+def _launch_browser(playwright_instance, channel: str | None = None, headless: bool = True):
+    """启动浏览器，自动回退：指定 channel → msedge → 内置 chromium。
+
+    返回 (browser, notes)；notes 记录「检测到缺哪个浏览器 / 为何切换」的原因，
+    前端可据此向用户展示。
+
+    解决「选了 chrome 但机器没装 Google Chrome」时报错的问题。
+    """
+    notes: list[str] = []
+    last_err: Exception | None = None
+    for ch in _browser_order(channel):
+        label = {None: "内置 Chromium", "chrome": "Google Chrome", "msedge": "Microsoft Edge"}.get(ch, ch)
+        # 预检测：该浏览器是否已安装（给出明确原因）
+        if ch:
+            if not _browser_exe_paths(ch):
+                notes.append(f"检测到未安装 {label}，尝试改用其他浏览器")
+                last_err = RuntimeError(f"{label} 未安装")
+                continue
+        try:
+            kwargs: dict = {"headless": headless}
+            if ch:
+                kwargs["channel"] = ch
+            browser = playwright_instance.chromium.launch(**kwargs)
+            if ch is not None and channel is not None and ch != channel:
+                notes.append(f"「{channel}」不可用，已自动切换到「{label}」")
+            return browser, notes
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            notes.append(f"启动 {label} 失败：{str(e)[:100]}")
+            continue
+    raise RuntimeError(
+        f"浏览器启动失败（尝试过 {[c or 'chromium' for c in _browser_order(channel)]}）：{last_err}\n"
+        "请确认安装了 Edge/Chrome，或运行 python -m playwright install chromium 下载内置内核"
+    ) from last_err
+
+
 class DryRunPublisher(Publisher):
     """干跑发布（不真发，用于测试/演示）"""
 
@@ -117,6 +181,7 @@ class XhsPlaywrightPublisher(Publisher):
         auto_approve: bool = False,
         harness=None,
         user_id: str | None = None,
+        scan_wait_seconds: int = 120,
     ):
         self.storage_state = storage_state
         self.headless = headless
@@ -130,6 +195,8 @@ class XhsPlaywrightPublisher(Publisher):
         self.auto_approve = auto_approve
         self.harness = harness
         self.user_id = user_id
+        self.scan_wait_seconds = scan_wait_seconds   # 有头模式扫码等待上限
+        self.browser_notes: list[str] = []   # 浏览器检测/切换原因（供前端展示）
 
     # ---------- 公共入口 ----------
 
@@ -362,10 +429,10 @@ class XhsPlaywrightPublisher(Publisher):
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            launch_kwargs: dict = {"headless": self.headless}
-            if self.channel:
-                launch_kwargs["channel"] = self.channel  # 系统 Chrome（免下载浏览器）
-            browser = p.chromium.launch(**launch_kwargs)
+            browser, notes = _launch_browser(p, self.channel, self.headless)
+            self.browser_notes = notes   # 供前端展示（如「未装 Chrome，已切 Edge」）
+            for n in notes:
+                print(f"[browser] {n}")
             try:
                 context = browser.new_context(storage_state=self.storage_state)
                 page = context.new_page()
@@ -377,8 +444,17 @@ class XhsPlaywrightPublisher(Publisher):
                 print(f"  [timing] 切换发布类型: {int((time.time() - t0) * 1000)}ms")
 
                 try:
-                    # 图片上传（图文模式必需 ≥1 张；缺图时用默认封面兜底）
+                    # 图片上传（图文模式必需 ≥1 张；缺图时自动生成标题封面）
                     images = self._resolve_images(draft)
+                    if not images:
+                        try:
+                            from core.covergen import ensure_cover_for_draft
+                            cover = ensure_cover_for_draft(draft)
+                            if cover:
+                                images = [cover]
+                                print(f"[info] 已自动生成标题封面: {cover}")
+                        except Exception as e:  # noqa: BLE001
+                            print(f"[warn] 封面生成失败: {e}")
                     if not images:
                         default_cover = Path(__file__).resolve().parent.parent / "assets" / "note_cover.png"
                         if default_cover.exists():
@@ -426,54 +502,49 @@ class XhsPlaywrightPublisher(Publisher):
                     published = False
                     real_url: str | None = None
 
-                    # 证据 1：URL 出现 published=true（真发布标志）或跳转到笔记页
-                    try:
-                        page.wait_for_url(
-                            lambda u: "published=true" in u or "published=1" in u
-                                      or (("explore" in u or "note" in u) and "creator" not in u),
-                            timeout=8000,
+                    # 风控/扫码验证处理：
+                    #   headed 模式 → 停在浏览器等你扫码（最长 scan_wait_seconds），扫完继续
+                    #   headless 模式 → 无法扫码，直接给明确提示
+                    risk = self._handle_risk_control(page)
+                    if risk == "blocked":
+                        raise PublishUnconfirmed(
+                            "小红书安全风控：要求「小红书APP 扫码验证身份」。\n"
+                            "headless 模式无法扫码。请用有头模式发布：\n"
+                            "  命令行：python main.py publish ... --real --headed\n"
+                            "  可视化：勾选「有头模式」后发布，弹出窗口时用小红书 APP 扫码。"
                         )
-                        if "explore" in page.url or "note" in page.url:
-                            real_url = page.url
-                        published = True
-                    except Exception:  # noqa: BLE001
-                        pass
 
-                    # 证据 2：出现「发布成功」类提示
-                    if not published:
-                        for txt in ("发布成功", "已发布", "发布完成"):
-                            try:
-                                page.get_by_text(txt).first.wait_for(
-                                    state="visible", timeout=5000)
-                                published = True
-                                break
-                            except Exception:  # noqa: BLE001
-                                continue
-
-                    # 证据 3：成功弹窗里点「查看笔记」拿真实链接（可能开新标签页）
-                    if published and real_url is None:
-                        for view_text in ("查看笔记", "查看详情"):
-                            try:
-                                btn_v = page.get_by_text(view_text, exact=True).last
-                                btn_v.click(timeout=3000)
-                                page.wait_for_timeout(2500)
-                                for pg in page.context.pages:
-                                    if "xiaohongshu.com/explore" in pg.url or "xiaohongshu.com/discovery" in pg.url:
-                                        real_url = pg.url
-                                        break
-                                if real_url:
-                                    break
-                            except Exception:  # noqa: BLE001
-                                continue
+                    published, real_url = self._verify_published(page)
+                    if not published and risk == "scanned":
+                        # 扫码完成后可能需重新触发发布
+                        print("[info] 扫码验证完成，重新触发发布…")
+                        self._click_publish(page)
+                        page.wait_for_timeout(1500)
+                        self._handle_risk_control(page)   # 若再次弹出则继续等待
+                        published, real_url = self._verify_published(page)
 
                     # 无论成败，留真实现场证据（截图+HTML）
                     self._dump_debug(page, "publish_result")
 
                     if not published:
+                        # 再查一次风控（可能弹窗稍后才出现）
+                        risk2 = self._check_risk_control(page)
+                        if risk2:
+                            raise PublishUnconfirmed(
+                                "小红书安全风控：要求扫码验证。请用有头模式（--headed 或界面勾选「有头模式」）发布并扫码。"
+                            )
                         raise PublishUnconfirmed(
                             "点击发布后未检测到成功确认。现场已存 logs/xhs_publish_result_*，"
                             "请用 python main.py notes 查看「笔记管理」确认这篇是否已发布/草稿/审核中。"
                         )
+                    # 发布成功后：把最新登录态（含「已信任设备」标记）写回，
+                    # 下次少触发「新设备+扫码验证」风控
+                    try:
+                        context.storage_state(path=self.storage_state)
+                        print(f"[info] 已保存最新登录态（含本设备信任标记）→ {self.storage_state}")
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[warn] 保存登录态失败: {e}")
+
                     url = real_url or page.url
                 except PublishUnconfirmed:
                     raise
@@ -516,6 +587,80 @@ class XhsPlaywrightPublisher(Publisher):
             except Exception:  # noqa: BLE001
                 continue
         print("[warn] 发布按钮点击失败")
+
+    def _check_risk_control(self, page) -> str | None:
+        """检测小红书安全风控/扫码验证弹窗，命中则返回提示文案（否则 None）"""
+        for kw in ("扫码验证", "验证身份", "请使用已登录该账号", "安全验证", "账号存在异常"):
+            try:
+                if page.get_by_text(kw).count() > 0:
+                    return f"小红书安全风控：要求「{kw}」"
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def _handle_risk_control(self, page) -> str:
+        """处理扫码验证风控。返回：
+        - "none"    未触发风控
+        - "blocked" 触发风控且 headless（无法扫码）→ 调用方报错
+        - "scanned" 触发风控，有头模式下已等待用户扫码完成
+        """
+        if not self._check_risk_control(page):
+            return "none"
+        if self.headless:
+            return "blocked"
+        deadline = time.time() + self.scan_wait_seconds
+        print(f"\n⚠️ 小红书要求扫码验证：请在浏览器窗口中用「小红书APP」扫码。")
+        print(f"   最长等待 {self.scan_wait_seconds} 秒，扫码完成后自动继续…\n")
+        while time.time() < deadline:
+            page.wait_for_timeout(2000)
+            if not self._check_risk_control(page):
+                print("[info] 扫码验证完成，继续发布…")
+                return "scanned"
+        raise PublishUnconfirmed(
+            f"扫码验证超时（{self.scan_wait_seconds}s）。请重试，并在弹窗出现时尽快用小红书APP扫码。"
+        )
+
+    def _verify_published(self, page) -> tuple[bool, str | None]:
+        """真实发布验证：URL 出现 published=true / 成功提示 / 查看笔记抓链接"""
+        published = False
+        real_url: str | None = None
+        # 证据 1：URL 出现 published=true（真发布标志）或跳转到笔记页
+        try:
+            page.wait_for_url(
+                lambda u: "published=true" in u or "published=1" in u
+                          or (("explore" in u or "note" in u) and "creator" not in u),
+                timeout=8000,
+            )
+            if "explore" in page.url or "note" in page.url:
+                real_url = page.url
+            published = True
+        except Exception:  # noqa: BLE001
+            pass
+        # 证据 2：出现「发布成功」类提示
+        if not published:
+            for txt in ("发布成功", "已发布", "发布完成"):
+                try:
+                    page.get_by_text(txt).first.wait_for(state="visible", timeout=5000)
+                    published = True
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        # 证据 3：成功弹窗里点「查看笔记」拿真实链接（可能开新标签页）
+        if published and real_url is None:
+            for view_text in ("查看笔记", "查看详情"):
+                try:
+                    btn_v = page.get_by_text(view_text, exact=True).last
+                    btn_v.click(timeout=3000)
+                    page.wait_for_timeout(2500)
+                    for pg in page.context.pages:
+                        if "xiaohongshu.com/explore" in pg.url or "xiaohongshu.com/discovery" in pg.url:
+                            real_url = pg.url
+                            break
+                    if real_url:
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+        return published, real_url
 
     def _add_topics_via_button(self, page, tags: list[str]):
         """图文模式：点「话题」按钮添加话题标签（尽力而为，不阻断发布）"""
@@ -619,10 +764,9 @@ def export_login_state(
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        launch_kwargs: dict = {"headless": headless}
-        if channel not in (None, "", "chromium"):
-            launch_kwargs["channel"] = channel
-        browser = p.chromium.launch(**launch_kwargs)
+        browser, notes = _launch_browser(p, None if channel in (None, "", "chromium") else channel, headless)
+        for n in notes:
+            print(f"[browser] {n}")
         context = browser.new_context()
         page = context.new_page()
         page.goto("https://creator.xiaohongshu.com/publish/publish", wait_until="domcontentloaded")
@@ -652,10 +796,9 @@ def debug_selectors(
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        launch_kwargs: dict = {"headless": headless}
-        if channel not in (None, "", "chromium"):
-            launch_kwargs["channel"] = channel
-        browser = p.chromium.launch(**launch_kwargs)
+        browser, notes = _launch_browser(p, None if channel in (None, "", "chromium") else channel, headless)
+        for n in notes:
+            print(f"[browser] {n}")
         context = browser.new_context(storage_state=state_path)
         page = context.new_page()
         page.goto("https://creator.xiaohongshu.com/publish/publish", wait_until="domcontentloaded")
@@ -748,10 +891,9 @@ def probe_publish_ui(
     tab_label = "上传图文" if mode == "tuwen" else "写长文"
     found: dict[str, list[str]] = {"buttons": [], "inputs": [], "contenteditable": [], "publish_text": []}
     with sync_playwright() as p:
-        launch_kwargs: dict = {"headless": headless}
-        if channel not in (None, "", "chromium"):
-            launch_kwargs["channel"] = channel
-        browser = p.chromium.launch(**launch_kwargs)
+        browser, notes = _launch_browser(p, None if channel in (None, "", "chromium") else channel, headless)
+        for n in notes:
+            print(f"[browser] {n}")
         context = browser.new_context(storage_state=state_path)
         page = context.new_page()
         page.goto("https://creator.xiaohongshu.com/publish/publish", wait_until="domcontentloaded")
@@ -891,10 +1033,9 @@ def list_recent_notes(
     out.mkdir(parents=True, exist_ok=True)
     results: list[dict] = []
     with sync_playwright() as p:
-        launch_kwargs: dict = {"headless": headless}
-        if channel not in (None, "", "chromium"):
-            launch_kwargs["channel"] = channel
-        browser = p.chromium.launch(**launch_kwargs)
+        browser, notes = _launch_browser(p, None if channel in (None, "", "chromium") else channel, headless)
+        for n in notes:
+            print(f"[browser] {n}")
         context = browser.new_context(storage_state=state_path)
         page = context.new_page()
         page.goto("https://creator.xiaohongshu.com/publish/publish", wait_until="domcontentloaded")

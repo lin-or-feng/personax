@@ -99,6 +99,16 @@ def cmd_generate(args):
     draft = orch.run(topic=args.topic, user_id=args.user, skill_chain=chain)
     _print_draft(draft)
 
+    # 自动生成标题封面（多模态 · 零成本；--no-cover 关闭）
+    if getattr(args, "cover", True):
+        try:
+            from core.covergen import ensure_cover_for_draft
+            cover = ensure_cover_for_draft(draft)
+            if cover:
+                print(f"\n[封面] 已生成: {cover}")
+        except Exception as e:  # noqa: BLE001
+            print(f"\n[封面] 生成失败: {e}")
+
     # 合规门禁（商用：发布前必检）
     comp = compliance.check_draft(draft)
     print(f"\n[合规] {comp.summary}")
@@ -297,6 +307,9 @@ def main():
     p_gen.add_argument("--publish", dest="real", action="store_true",
                        help="[旧用法别名] 等价于 --real")
     p_gen.add_argument("--headed", action="store_true", help="有头浏览器（调试用）")
+    p_gen.add_argument("--cover", action="store_true", default=True,
+                       help="自动生成标题封面（默认开启；--no-cover 关闭）")
+    p_gen.add_argument("--no-cover", dest="cover", action="store_false", help="不生成封面")
     p_gen.add_argument("--browser", default=None, choices=["chromium", "chrome", "msedge"],
                        help="浏览器：chromium(默认) / chrome(系统Chrome) / msedge(系统Edge，免下载)")
     p_gen.set_defaults(func=cmd_generate)

@@ -29,12 +29,16 @@ class Orchestrator:
             [c.text for c in rag_pipe.retrieve_relevant(topic, top_k=2, min_score=0.10)]
             if rag_pipe.store.chunks else []
         )
+        # 联网热点（可选：WEB_SEARCH_ENABLED=1 开启；失败/关闭返回空串，不影响生成）
+        from .websearch import build_web_context
+        web_context = build_web_context(topic)
         ctx = ExecutionContext(
             run_id=str(uuid.uuid4())[:8],
             persona=self.persona,
             user_id=user_id,
             prompts=prompts,
             rag_examples=rag_examples,
+            web_context=web_context,
         )
         chain = skill_chain or [name for name, _ in route_skills(topic, top_k=3)]
 
@@ -54,6 +58,7 @@ class Orchestrator:
                 "persona": self.persona,
                 "prompts": prompts,
                 "rag_examples": rag_examples,
+                "web_context": web_context,
             }))
             draft = result.draft
             self.audit.write(event="skill_done", skill=skill_name, notes=result.notes)
