@@ -14,6 +14,7 @@ probe_*/
 px2_*/
 pytest-cache-files-*/
 assets/covers/
+docs/上下文摘要.md
 
 # Python
 __pycache__/
