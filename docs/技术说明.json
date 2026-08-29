@@ -41,7 +41,37 @@
     "ban_count": 0,
     "risk_control_events": 1,
     "risk_recovery": "补设备信息 + 切有头模式（可扫码验证）后发布恢复",
-    "metric_notes": "posts_per_day 因项目按需发布（非日更）为 0 属预期；e2e 耗时仅计生成段，发布段为 estimate 标注。其余均为日志实测。"
+    "metric_notes": "posts_per_day 因项目按需发布（非日更）为 0 属预期；e2e 耗时仅计生成段，发布段为 estimate 标注。其余均为日志实测。",
+    "web_search_diff": {
+      "note": "同主题「秋招穿搭」、同 4-Skill 链、只改联网开关各跑 1 次的对照",
+      "body_prompt_tokens_offline": 401,
+      "body_prompt_tokens_online": 560,
+      "prompt_delta": 159,
+      "gen_time_offline_s": "4.2-7.0",
+      "gen_time_online_s": "5.9-11.6",
+      "time_delta": "+1~5s（bing 抓取，视网络）",
+      "llm_calls": "不变(4)",
+      "conclusion": "联网注入 web 热点上下文（+159 token）并多花 1~5s；搜不到相关内容时自动跳过、不影响生成。"
+    },
+    "real_publish_cases": [
+      {
+        "id": "web-20260830022739",
+        "topic": "AI 漫剧",
+        "tags": ["#ai漫剧指南", "#二次元爱好者", "#剧本创作", "#动画制作", "#科技感十足"],
+        "images": 2,
+        "open_page_ms": 4600,
+        "switch_tuwen_ms": 7200,
+        "success_evidence": "URL published=true + publish_log.json 留痕",
+        "risk_note": "话题联想未触发 → 标签降级为正文 #文本"
+      },
+      {
+        "id": "future.json",
+        "topic": "考研英语复习方法",
+        "title": "考研英语 80 分学姐的复习方法｜别再无效刷题了🍃",
+        "tags": ["#考研英语", "#学习方法"],
+        "type": "定时稿件（content_bank）"
+      }
+    ]
   },
   "code_refs": {
     "rate_limit": "config/persona.yaml:43-44 (skill 60/min, publish 3/min)",
