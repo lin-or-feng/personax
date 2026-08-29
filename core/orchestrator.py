@@ -20,6 +20,8 @@ class Orchestrator:
         self.enforcer = StyleEnforcer(persona)
 
     def run(self, topic: str, user_id: str | None = None, skill_chain: list[str] | None = None) -> Draft:
+        import time as _time
+        _t0 = _time.time()
         draft = Draft(topic=topic)
         # 提示词资产 + RAG 知识库（可热更新，缺省安全回退）
         prompts = load_prompts(self.persona.get("prompts_path", "config/prompts.yaml"))
@@ -86,4 +88,23 @@ class Orchestrator:
                 break
 
         ctx.checkpoint["final_draft"] = draft.model_dump()
+        self._record_run(topic, _t0, chain)
         return draft
+
+    def _record_run(self, topic: str, t0: float, chain: list[str]) -> None:
+        """用量埋点：记录单篇生成的端到端耗时 + token 合计（失败静默）。"""
+        try:
+            import time as _time
+            from .usage import record, take_tokens
+            tokens = take_tokens()
+            record(
+                "gen",
+                topic=topic,
+                wall_ms=round((_time.time() - t0) * 1000.0, 1),
+                skills=len(chain),
+                prompt_tokens=tokens.get("prompt") or None,
+                completion_tokens=tokens.get("completion") or None,
+                llm_calls=tokens.get("calls") or None,
+            )
+        except Exception:  # noqa: BLE001 —— 埋点失败不影响生成
+            pass

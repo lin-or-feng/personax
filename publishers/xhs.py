@@ -84,6 +84,23 @@ class PublishUnconfirmed(Exception):
     """点击发布后未检测到成功证据（不返回假成功）"""
 
 
+def _record_publish(mode: str, draft: Draft, result: "PublishResult", t0: float | None = None) -> None:
+    """用量埋点：记录每次发布结果（success / cost_ms / mode），失败静默。"""
+    try:
+        from core.usage import record
+        record(
+            "publish",
+            mode=mode,
+            topic=draft.topic,
+            title=draft.title,
+            success=result.success,
+            cost_ms=result.cost_ms,
+            wall_ms=round((time.time() - t0) * 1000.0, 1) if t0 else None,
+        )
+    except Exception:  # noqa: BLE001 —— 埋点失败不影响发布
+        pass
+
+
 def _browser_exe_paths(channel: str) -> list[Path]:
     """返回指定浏览器通道的常见安装路径（存在的）"""
     pf = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files"))
@@ -155,12 +172,14 @@ class DryRunPublisher(Publisher):
 
     def publish(self, draft: Draft) -> PublishResult:
         time.sleep(0.05)
-        return PublishResult(
+        result = PublishResult(
             success=True,
             url="https://www.xiaohongshu.com/explore/mock-123",
             message=f"[DRY] 发布《{draft.title}》 tags={draft.tags}",
             cost_ms=50,
         )
+        _record_publish("dry", draft, result)
+        return result
 
 
 class XhsPlaywrightPublisher(Publisher):
@@ -205,19 +224,24 @@ class XhsPlaywrightPublisher(Publisher):
         draft: Draft,
         confirm: Optional[Callable[[Draft], bool]] = None,
     ) -> PublishResult:
+        _t0 = time.time()
         # 1) 幂等：已发布过则跳过
         if draft.metadata.get("publish_url"):
-            return PublishResult(
+            result = PublishResult(
                 success=True,
                 url=draft.metadata["publish_url"],
                 message=f"[IDEMPOTENT] 已发布过，跳过: {draft.metadata['publish_url']}",
             )
+            _record_publish("real", draft, result, _t0)
+            return result
 
         # 2) 限速：真实发布专用配额（与 Skill 调用预算分离）
         if self.harness is not None:
             ok, reason = self.harness.check_publish_quota(self.user_id)
             if not ok:
-                return PublishResult(success=False, message=f"限速拦截: {reason}")
+                result = PublishResult(success=False, message=f"限速拦截: {reason}")
+                _record_publish("real", draft, result, _t0)
+                return result
 
         # 3) 人工审批（默认开启，无人值守需 auto_approve）
         if not self.auto_approve:
@@ -239,18 +263,24 @@ class XhsPlaywrightPublisher(Publisher):
             try:
                 url = self._do_publish(draft)
                 draft.metadata["publish_url"] = url
-                return PublishResult(success=True, url=url, message=f"发布成功: {url}")
+                result = PublishResult(success=True, url=url, message=f"发布成功: {url}")
+                _record_publish("real", draft, result, _t0)
+                return result
             except PublishUnconfirmed as e:
                 # 未确认 ≠ 失败重试：直接返回，附真实现场证据
                 self._screenshot("publish_unconfirmed")
-                return PublishResult(success=False, message=str(e))
+                result = PublishResult(success=False, message=str(e))
+                _record_publish("real", draft, result, _t0)
+                return result
             except Exception as e:  # noqa: BLE001 —— 商用：吞异常并重试+截图
                 last_err = e
                 self._screenshot(f"fail_attempt{attempt}")
                 if attempt < self.max_retries:
                     delay = self.retry_delays[min(attempt - 1, len(self.retry_delays) - 1)]
                     time.sleep(delay)
-        return PublishResult(success=False, message=f"发布失败（重试{self.max_retries}次）: {last_err}")
+        result = PublishResult(success=False, message=f"发布失败（重试{self.max_retries}次）: {last_err}")
+        _record_publish("real", draft, result, _t0)
+        return result
 
     # ---------- 内部实现 ----------
 

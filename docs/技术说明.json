@@ -1,0 +1,80 @@
+{
+  "project": "PersonaX",
+  "repo": "https://github.com/lin-or-feng/personax",
+  "overview": "小红书内容生成 + 商用级自动发布 Agent：多人格内容生成 → 合规门禁 → RAG/联网增强 → 多模态封面 → Playwright 真实发布，全程用量埋点 + 审计留痕。",
+  "architecture": {
+    "layers": ["接入层 main.py/app.py", "编排层 core/orchestrator.py", "能力层 skills/ core/rag.py core/llm.py core/websearch.py core/covergen.py", "基础设施 core/types.py core/registry.py core/harness.py core/usage.py"],
+    "llm_backends": {
+      "ollama": "本地免费，默认 qwen2.5:7b（GPU 推理）",
+      "deepseek": "云端 OpenAI 兼容（需 DEEPSEEK_API_KEY）",
+      "offline": "无模型模板降级"
+    },
+    "key_components": {
+      "multi_persona": "config/personas.yaml 6 人格 + core/persona.py build_persona_block/suggest_persona（关键词长度打分推荐）",
+      "rag": "core/rag.py _chinese_tokens:23 中文二元组相似度 + retrieve_relevant:140 min_score=0.10 相关性门控",
+      "compliance": "core/compliance.py:27 广告法/医疗/金融/平台词表，发布前硬门禁",
+      "cover_gen": "core/covergen.py 5 风格 + 描述驱动 + SiliconFlow AI 背景可回退海报",
+      "web_enhance": "core/websearch.py bing/bocha/tavily，_relevant 主题过滤，失败降级空串",
+      "publish": "publishers/xhs.py 上传图文 → 图片上传 → 坐标点击发布 → 真实验证(published=true)",
+      "usage_telemetry": "core/usage.py 用量埋点 → logs/usage.jsonl（llm_call/gen/publish 三类事件）"
+    }
+  },
+  "metrics": {
+    "measured_at": "2026-08-30",
+    "method": "本机 Ollama qwen2.5:7b + RTX 4060 Ti 8GB，纯本地无联网，5 次真实生成 + 干跑发布，日志落盘 logs/usage.jsonl 后聚合",
+    "accounts": 1,
+    "knowledge_items": 3,
+    "knowledge_scale": {"files": 3, "cjk_chars": 358, "words": 367, "paragraphs": 9},
+    "e2e_generate_ms": {"avg": 6870.7, "min": 6275.6, "max": 7637.7, "samples": 5, "unit": "ms"},
+    "e2e_generate_seconds": 6.9,
+    "e2e_publish_seconds": {"note": "真实发布另需浏览器自动化，estimate", "range": "30-45", "unit": "s"},
+    "llm_calls_per_post": 3,
+    "tokens_per_post": {"prompt_avg": 916.2, "completion_avg": 237.2, "total_avg": 1153.4},
+    "publish_success": {
+      "dry_total": 5,
+      "dry_success": 5,
+      "dry_success_rate": 100.0,
+      "real_published_log_count": 3,
+      "real_success_evidence": "publish_log.json 留痕，成功依据=页面 URL published=true，非假成功"
+    },
+    "posts_per_day": {"sustained_daily": 0, "historical_total_published": 3, "note": "未做日更排期；真实发布为手动/定时按需触发，非持续日更"},
+    "ban_count": 0,
+    "risk_control_events": 1,
+    "risk_recovery": "补设备信息 + 切有头模式（可扫码验证）后发布恢复",
+    "metric_notes": "posts_per_day 因项目按需发布（非日更）为 0 属预期；e2e 耗时仅计生成段，发布段为 estimate 标注。其余均为日志实测。"
+  },
+  "code_refs": {
+    "rate_limit": "config/persona.yaml:43-44 (skill 60/min, publish 3/min)",
+    "llm_retry": "core/llm.py:145 complete() 指数退避重试",
+    "usage_telemetry": "core/usage.py:49 record() 追加 logs/usage.jsonl",
+    "rag_relevance": "core/rag.py:140 retrieve_relevant(min_score=0.10)",
+    "skill_routing": "core/registry.py:44 weights semantic:0.5/keyword:0.3/popularity:0.2",
+    "publish_entry": "publishers/xhs.py:222 publish()",
+    "browser_fallback": "publishers/xhs.py:132 _launch_browser() chrome→msedge→chromium",
+    "publish_click": "publishers/xhs.py:591 _click_publish() 阴影DOM坐标点击",
+    "risk_control": "publishers/xhs.py:631 _handle_risk_control() 有头扫码等待",
+    "verify_published": "publishers/xhs.py:653 _verify_published()",
+    "compliance": "core/compliance.py:27 ad_law/medical/finance/platform 词表",
+    "personas": "config/personas.yaml 6 人格",
+    "tests": "52 个测试（pytest，离线确定性）"
+  },
+  "decisions": [
+    {"问题": "发布返回「假成功」无法核实", "方案": "成功必须证据：页面 URL published=true / 成功 toast / 真实笔记 URL", "取舍": "宁可报「未确认」也不谎报成功"},
+    {"问题": "长文编辑器无发布按钮", "方案": "发布前切换「上传图文」标签页", "取舍": "放弃长文排版，走图文发布通道"},
+    {"问题": "发布按钮在 closed shadow DOM，选择器够不到", "方案": "截图+PIL 像素定位红色按钮 → 坐标点击", "取舍": "坐标点击对页面尺寸敏感，需适配常见分辨率"},
+    {"问题": "隐藏 file input 找不到（_find 要求可见）", "方案": "state=attached + set_input_files 直接传文件", "取舍": "绕过 DOM 可见性检查，依赖 Playwright 内部 API"},
+    {"问题": "无头模式缺设备信息触发风控", "方案": "补设备信息 + 有头模式可扫码验证", "取舍": "有头模式无法无人值守，需人工扫码"},
+    {"问题": "风控扫码会中断发布", "方案": "有头模式等待 120s（scan_wait_seconds）扫完自动继续", "取舍": "牺牲全自动，换发布稳定性"},
+    {"问题": "3b 小模型产出 emoji 乱码/段标签", "方案": "_sanitize_body 清洗 + 升级 qwen2.5:7b", "取舍": "7b 更慢更吃显存，但质量明显提升"},
+    {"问题": "标题照抄人格示例句", "方案": "标题用 _persona_short（不给示例）", "取舍": "牺牲少量风格一致性，避免抄袭感"}
+  ],
+  "missing_capabilities": [
+    "无代码覆盖率报告（coverage.py）",
+    "无监控/告警（发布失败无邮件/IM 通知）",
+    "无 Docker/CI（本地手工部署）",
+    "无分布式限速（单机内存限速，多实例会各自计数）",
+    "无向量数据库（RAG 用内存 bigram，数据量大后需换 Milvus/Qdrant）",
+    "无话题芯片自动添加（话题联想未触发时降级为 #文本）",
+    "无发布数据回捞看板（笔记曝光/互动数据未自动回收）"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "backend": "ollama",
+  "model": "qwen2.5:7b",
+  "device": "RTX 4060 Ti 8GB (GPU)",
+  "n_generations": 5,
+  "e2e_generate_ms": {
+    "avg": 6870.7,
+    "min": 6275.6,
+    "max": 7637.7,
+    "all": [
+      7160.9,
+      6496.2,
+      6275.6,
+      7637.7,
+      6783.3
+    ]
+  },
+  "tokens_per_post": {
+    "prompt_avg": 916.2,
+    "completion_avg": 237.2,
+    "total_avg": 1153.4,
+    "prompt_all": [
+      1053,
+      1006,
+      899,
+      899,
+      724
+    ],
+    "completion_all": [
+      213,
+      223,
+      214,
+      289,
+      247
+    ]
+  },
+  "llm_calls_per_post": 3,
+  "publish": {
+    "dry_total": 5,
+    "dry_success": 5,
+    "dry_success_rate": 100.0,
+    "real_published_log_count": 3
+  },
+  "knowledge": {
+    "files": 3,
+    "cjk_chars": 358,
+    "words": 367,
+    "paragraphs": 9
+  }
+}

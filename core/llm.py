@@ -178,12 +178,14 @@ def complete(
     last_err: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
+            t0 = time.time()
             resp = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+            _record_usage(model, t0, resp)
             return resp.choices[0].message.content or ""
         except _RETRYABLE as e:
             last_err = e
@@ -192,6 +194,27 @@ def complete(
         except Exception as e:  # noqa: BLE001 —— 非可重试错误（参数/鉴权等）直接失败
             raise LLMError(f"LLM 调用失败（非重试错误）: {e}") from e
     raise LLMError(f"LLM 调用失败（重试{max_retries}次后放弃）: {last_err}")
+
+
+def _record_usage(model: str, t0: float, resp) -> None:
+    """用量埋点：记录每次 LLM 调用的耗时 + token 数（失败静默）。"""
+    try:
+        from .usage import add_tokens, record
+        latency_ms = round((time.time() - t0) * 1000.0, 1)
+        usage = getattr(resp, "usage", None)
+        prompt_tokens = getattr(usage, "prompt_tokens", None)
+        completion_tokens = getattr(usage, "completion_tokens", None)
+        add_tokens(prompt_tokens, completion_tokens)
+        record(
+            "llm_call",
+            backend=_backend(),
+            model=model,
+            latency_ms=latency_ms,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+    except Exception:  # noqa: BLE001 —— 埋点失败不影响生成
+        pass
 
 
 def _local_fallback(prompt: str, system: str) -> str:
