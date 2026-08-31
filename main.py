@@ -42,6 +42,7 @@ import skills  # noqa: F401  触发 @register
 from core.orchestrator import Orchestrator
 from core.harness import Harness, RuleConfig, AuditLog
 from core.compliance import ComplianceEngine, load_compliance_config
+from core.publish_safety import real_publish_enabled, real_publish_disabled_message
 from publishers.xhs import (
     DryRunPublisher, XhsPlaywrightPublisher, export_login_state, debug_selectors,
     list_recent_notes, probe_publish_ui,
@@ -118,6 +119,9 @@ def cmd_generate(args):
           f"issues={draft.metadata.get('publish_issues', [])}")
 
     # 发布（默认干跑；--publish/--real 才真发）
+    if args.real and not real_publish_enabled():
+        print(f"\n[安全锁] {real_publish_disabled_message()}")
+        return
     if args.real:
         publisher = XhsPlaywrightPublisher(
             storage_state=args.storage_state,
@@ -125,6 +129,7 @@ def cmd_generate(args):
             channel=args.browser,
             harness=harness,
             user_id=args.user,
+            keep_browser_on_failure=args.keep_open_on_failure,
         )
     else:
         publisher = DryRunPublisher()
@@ -169,6 +174,10 @@ def cmd_publish(args):
         print("发布已拦截（先修改内容再重试）")
         return
 
+    if args.real and not real_publish_enabled():
+        print(f"\n[安全锁] {real_publish_disabled_message()}")
+        return
+
     publisher = DryRunPublisher() if not args.real else XhsPlaywrightPublisher(
         storage_state=args.storage_state,
         headless=not args.headed,
@@ -176,6 +185,7 @@ def cmd_publish(args):
         auto_approve=args.yes,
         harness=harness,
         user_id=args.user,
+        keep_browser_on_failure=args.keep_open_on_failure,
     )
     try:
         result = publisher.publish(draft)
@@ -197,6 +207,10 @@ def cmd_schedule(args):
     persona = resolve_persona_arg(args.persona)
     orch, harness, audit = build_orchestrator(persona, args.user)
     compliance = ComplianceEngine(load_compliance_config(args.compliance))
+
+    if args.real and not real_publish_enabled():
+        print(f"[安全锁] {real_publish_disabled_message()}")
+        return
 
     publisher = DryRunPublisher() if not args.real else XhsPlaywrightPublisher(
         storage_state=args.storage_state,
@@ -307,6 +321,8 @@ def main():
     p_gen.add_argument("--publish", dest="real", action="store_true",
                        help="[旧用法别名] 等价于 --real")
     p_gen.add_argument("--headed", action="store_true", help="有头浏览器（调试用）")
+    p_gen.add_argument("--keep-open-on-failure", action="store_true",
+                       help="有头模式失败时保留浏览器，关闭窗口后结束")
     p_gen.add_argument("--cover", action="store_true", default=True,
                        help="自动生成标题封面（默认开启；--no-cover 关闭）")
     p_gen.add_argument("--no-cover", dest="cover", action="store_false", help="不生成封面")
@@ -322,6 +338,8 @@ def main():
     p_pub.add_argument("--user", default="demo_user")
     p_pub.add_argument("--real", action="store_true", help="真实发布（默认干跑）")
     p_pub.add_argument("--headed", action="store_true")
+    p_pub.add_argument("--keep-open-on-failure", action="store_true",
+                       help="有头模式失败时保留浏览器，关闭窗口后结束")
     p_pub.add_argument("--yes", action="store_true", help="跳过人工确认（无人值守）")
     p_pub.add_argument("--browser", default=None, choices=["chromium", "chrome", "msedge"],
                        help="浏览器：chromium(默认) / chrome(系统Chrome) / msedge(系统Edge，免下载)")
@@ -403,4 +421,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

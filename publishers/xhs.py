@@ -201,6 +201,7 @@ class XhsPlaywrightPublisher(Publisher):
         harness=None,
         user_id: str | None = None,
         scan_wait_seconds: int = 120,
+        keep_browser_on_failure: bool = False,
     ):
         self.storage_state = storage_state
         self.headless = headless
@@ -215,6 +216,10 @@ class XhsPlaywrightPublisher(Publisher):
         self.harness = harness
         self.user_id = user_id
         self.scan_wait_seconds = scan_wait_seconds   # 有头模式扫码等待上限
+        # 调试模式：失败后不由程序关闭有头浏览器，直到用户手动关闭窗口。
+        # 便于直接查看平台提示、截图未覆盖到的浮层，并人工修改内容。
+        self.keep_browser_on_failure = keep_browser_on_failure
+        self.ai_generated = True   # 是否标注「内容由 AI 生成」（合规：默认标注，可被 draft.metadata 覆盖）
         self.browser_notes: list[str] = []   # 浏览器检测/切换原因（供前端展示）
 
     # ---------- 公共入口 ----------
@@ -275,6 +280,15 @@ class XhsPlaywrightPublisher(Publisher):
             except Exception as e:  # noqa: BLE001 —— 商用：吞异常并重试+截图
                 last_err = e
                 self._screenshot(f"fail_attempt{attempt}")
+                # 调试时已等待用户手动关闭浏览器；不要关闭后又重新打开两次，
+                # 否则失败现场既难观察，也可能触发平台的重复操作限制。
+                if self.keep_browser_on_failure and not self.headless:
+                    result = PublishResult(
+                        success=False,
+                        message=f"发布失败（调试现场已保留至手动关闭）：{e}",
+                    )
+                    _record_publish("real", draft, result, _t0)
+                    return result
                 if attempt < self.max_retries:
                     delay = self.retry_delays[min(attempt - 1, len(self.retry_delays) - 1)]
                     time.sleep(delay)
@@ -378,6 +392,79 @@ class XhsPlaywrightPublisher(Publisher):
             print(f"[warn] 切换「上传图文」失败: {e}")
         page.wait_for_timeout(2500)
 
+    def _mark_ai_generated(self, page):
+        """标注「笔记含AI合成内容」声明（合规，默认开启）。
+
+        实际 UI（2026-08 截图核实）：发布页「内容设置」区有一个「添加内容类型声明」
+        下拉，展开后含「笔记含AI合成内容」选项。点它即完成 AI 内容声明。
+        依据：小红书社区公约 2.0 + 国家《人工智能生成合成内容标识办法》，
+        AI 生成内容须主动标识，未标识会限流/封号；如实标识不影响流量。
+        选择器按真实文案「添加内容类型声明 / 笔记含AI合成内容」精确匹配，可追加候选。
+        """
+        if not self.ai_generated:
+            print("[info] 已关闭 AI 生成标注（ai_generated=False）")
+            return
+
+        def _click_first(match_sel: str, timeout: int = 2000) -> bool:
+            """点击第一个可见候选（容错：匹配一列候选文本）"""
+            try:
+                loc = page.locator(match_sel).first
+                loc.wait_for(state="visible", timeout=timeout)
+                loc.click(timeout=timeout)
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+
+        # 1) 打开「添加内容类型声明」下拉（先滚动到可见，再精确文案，再 JS 兜底）
+        opened = False
+        try:
+            # 先 scroll_into_view：该入口在内容设置区（页面下半部），不可见时点不到
+            trigger = page.locator("text=添加内容类型声明").first
+            trigger.scroll_into_view_if_needed(timeout=3000)
+            trigger.wait_for(state="visible", timeout=3000)
+            trigger.click(timeout=3000)
+            opened = True
+        except Exception:  # noqa: BLE001
+            opened = False
+        if not opened:
+            opened = _click_first(
+                "text=添加内容类型声明, div:has-text('添加内容类型声明') span, "
+                "div[class*='declare'] >> text=添加内容类型声明",
+                timeout=1500,
+            )
+        if not opened:
+            try:
+                opened = page.evaluate(
+                    """() => {
+                        const els = [...document.querySelectorAll('div,span,button')];
+                        const t = els.find(x => x.textContent.trim() === '添加内容类型声明'
+                                          && x.offsetParent !== null);
+                        if (t) { t.scrollIntoView({block:'center'}); t.click(); return true; }
+                        return false;
+                    }""")
+            except Exception:  # noqa: BLE001
+                opened = False
+        page.wait_for_timeout(1000)
+        if not opened:
+            print("[warn] 未找到「添加内容类型声明」入口，跳过 AI 标注")
+            return
+
+        # 2) 在展开的选项里点「笔记含AI合成内容」（可先滚动到该选项再点）
+        chosen = False
+        for sel in ("text=笔记含AI合成内容", "text=含AI合成内容", "text=AI合成内容"):
+            try:
+                opt = page.locator(sel).first
+                opt.scroll_into_view_if_needed(timeout=2000)
+                opt.wait_for(state="visible", timeout=2000)
+                opt.click(timeout=2000)
+                chosen = True
+                print(f"[info] 已标注「笔记含AI合成内容」（{sel}）")
+                break
+            except Exception:  # noqa: BLE001
+                continue
+        if not chosen:
+            print("[warn] 未找到「笔记含AI合成内容」选项，AI 标注可能未生效")
+
     def _upload_images(self, page, images: list[str]) -> bool:
         """上传图片（图文模式必需 ≥1 张，图上传后标题/正文/发布按钮才出现）。
 
@@ -455,6 +542,30 @@ class XhsPlaywrightPublisher(Publisher):
             pass
         return False
 
+    def _dismiss_permission_popup(self, page):
+        """关掉浏览器权限/引导浮层（如「了解你的位置」定位请求）。
+
+        这类浮层会遮挡编辑器，导致后续点击/发布按钮定位失败。按钮文案常见：
+        阻止 / 仅此一次 / 允许 / 知道了 / 暂不开启 / 取消。
+        尽力而为，找不到就静默跳过（不阻断主流程）。
+        """
+        for text in ("阻止", "仅此一次", "暂不", "知道了", "取消", "关闭"):
+            try:
+                loc = page.locator(f"button:has-text('{text}'), div[role='button']:has-text('{text}')").first
+                loc.wait_for(state="visible", timeout=800)
+                loc.click(timeout=1000)
+                page.wait_for_timeout(600)
+                print(f"[info] 已关闭权限/引导浮层:「{text}」")
+                return True
+            except Exception:  # noqa: BLE001 —— 浮层可能不存在/不可点，继续
+                continue
+        # 弹窗可能是浏览器原生权限条（不在 DOM），用 ESC 兜底
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
     def _do_publish(self, draft: Draft) -> str:
         from playwright.sync_api import sync_playwright
 
@@ -463,12 +574,34 @@ class XhsPlaywrightPublisher(Publisher):
             self.browser_notes = notes   # 供前端展示（如「未装 Chrome，已切 Edge」）
             for n in notes:
                 print(f"[browser] {n}")
+            keep_open = False
             try:
-                context = browser.new_context(storage_state=self.storage_state)
+                # 拒绝地理位置等敏感权限：从根上消除「了解你的位置」权限弹窗，
+                # 避免它遮挡编辑器导致后续点击/发布按钮定位失败
+                try:
+                    context = browser.new_context(
+                        storage_state=self.storage_state,
+                        permissions=[],
+                        geolocation=None,
+                        locale="zh-CN",
+                    )
+                    # Chromium 系：显式拒绝授权弹窗（读取/位置/通知等自动 dismiss）
+                    try:
+                        context.grant_permissions([], origin="https://creator.xiaohongshu.com")
+                    except Exception:  # noqa: BLE001
+                        pass
+                except TypeError:
+                    # 旧版 Playwright 不支持部分参数，退化为仅存储态
+                    context = browser.new_context(storage_state=self.storage_state)
                 page = context.new_page()
                 self._page = page
                 t0 = time.time()
                 self._ensure_logged_in(page)
+                # 兜底：若仍有权限弹窗/引导浮层，尝试一键关闭（不阻断主流程）
+                try:
+                    self._dismiss_permission_popup(page)
+                except Exception:  # noqa: BLE001
+                    pass
                 print(f"  [timing] 打开页面+登录检测: {int((time.time() - t0) * 1000)}ms")
                 self._select_publish_type(page)   # 切到「上传图文」
                 print(f"  [timing] 切换发布类型: {int((time.time() - t0) * 1000)}ms")
@@ -501,15 +634,23 @@ class XhsPlaywrightPublisher(Publisher):
                         el = self._find(page, self.selectors["title"], self.wait_timeout_ms)
                         el.fill(draft.title)
 
-                    # 正文
+                    # 正文：发布前去掉游离 # 话题和所有空白行，规避编辑器的换行限制。
                     if draft.body:
+                        clean_body = self._normalize_body(self._strip_inline_topics(draft.body))
                         el = self._find(page, self.selectors["body"], self.wait_timeout_ms)
                         el.click()
-                        page.keyboard.type(draft.body, delay=1)
+                        page.keyboard.type(clean_body, delay=1)
 
                     # 话题标签（图文模式点「话题」按钮添加，尽力而为，不阻断发布）
                     if draft.tags:
                         self._add_topics_via_button(page, draft.tags)
+
+                    # AI 生成标注（合规：默认勾选「内容由 AI 生成」）
+                    try:
+                        self.ai_generated = bool(draft.metadata.get("ai_generated", True))
+                        self._mark_ai_generated(page)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[warn] AI 生成标注失败（不影响发布）: {e}")
 
                     # 点击发布
                     self._click_publish(page)
@@ -563,6 +704,14 @@ class XhsPlaywrightPublisher(Publisher):
                             raise PublishUnconfirmed(
                                 "小红书安全风控：要求扫码验证。请用有头模式（--headed 或界面勾选「有头模式」）发布并扫码。"
                             )
+                        # 检查是否因「违反社区规范」被拒（页面停在编辑器，看起来像卡住）
+                        blocked = self._check_content_blocked(page)
+                        if blocked:
+                            raise PublishUnconfirmed(
+                                f"⚠️ 内容被小红书拦截：{blocked}。\n"
+                                "请回到编辑页删掉可能违规的措辞（绝对化用语/导流/敏感词），"
+                                "重新「检验」通过后再发布。现场已存 logs/。"
+                            )
                         raise PublishUnconfirmed(
                             "点击发布后未检测到成功确认。现场已存 logs/xhs_publish_result_*，"
                             "请用 python main.py notes 查看「笔记管理」确认这篇是否已发布/草稿/审核中。"
@@ -577,46 +726,126 @@ class XhsPlaywrightPublisher(Publisher):
 
                     url = real_url or page.url
                 except PublishUnconfirmed:
+                    if self.keep_browser_on_failure and not self.headless:
+                        keep_open = True
+                        self._wait_for_manual_debug_close(browser, page)
                     raise
                 except Exception:
                     # 失败现场：截图 + HTML，便于排查选择器/登录问题
                     self._dump_debug(page, "fail")
+                    if self.keep_browser_on_failure and not self.headless:
+                        keep_open = True
+                        self._wait_for_manual_debug_close(browser, page)
                     raise
             finally:
-                browser.close()
+                # 常规运行应立即回收浏览器；仅有头调试失败时交给用户手动关闭。
+                if not keep_open:
+                    browser.close()
         if real_url:
             return real_url
         return "https://www.xiaohongshu.com/explore/(已确认发布，链接见「笔记管理」)"
 
-    def _click_publish(self, page):
-        """点击真正的「发布」按钮。
+    def _wait_for_manual_debug_close(self, browser, page) -> None:
+        """失败现场保留在桌面，直到用户关闭有头浏览器窗口。"""
+        self._dump_debug(page, "failure_kept_open")
+        print(
+            "[debug] 发布失败，已保留浏览器窗口用于排查。"
+            "请查看平台提示或手动修改；关闭浏览器窗口后本次发布流程才会结束。"
+        )
+        while browser.is_connected():
+            time.sleep(0.5)
 
-        xhs-publish-btn 是闭合 shadow 的 Vue 自定义组件，内部「发布」按钮无法
-        用选择器/无障碍树拿到。实测其宿主区域底部右侧为红色「发布」按钮，
-        故按宿主相对位置点击（约宽 62%，高 50%）。先试穿透，再按坐标。
+    def _click_publish(self, page):
+        """点击真正的「发布」按钮（三层递进：像素定位 → 多坐标 → 文本穿透）。
+
+        xhs-publish-btn 是闭合 shadow 的 Vue 自定义组件，内部按钮无法用选择器/
+        无障碍树拿到。改为：
+        1) 像素定位：截图宿主区域，扫描小红书品牌红(#ff2442)色块质心，点真实按钮中心
+        2) 多坐标候选：若干常见比例点逐个试
+        3) 文本穿透：兜底
+        """
+        loc = page.locator("xhs-publish-btn").first
+        try:
+            loc.wait_for(state="attached", timeout=4000)
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 未找到发布按钮宿主元素: {e}")
+            return self._click_publish_fallback(page)
+
+        if self._click_publish_by_color(page, loc):
+            return
+        if self._click_publish_by_points(page, loc):
+            return
+        self._click_publish_fallback(page)
+
+    def _click_publish_by_color(self, page, loc) -> bool:
+        """像素定位红色「发布」按钮：截图宿主元素，扫红色像素簇质心点击。
+
+        小红书「发布」按钮为品牌红 #ff2442（R 高、G/B 低）。扫描整个宿主区域，
+        收集满足红色判定的像素，取质心作为按钮中心。比硬编码坐标更能自适应
+        按钮实际位置与窗口尺寸变化。找到的红色像素太少（<阈值）视为失败。
         """
         try:
-            loc = page.locator("xhs-publish-btn").first
-            loc.wait_for(state="attached", timeout=4000)
-            bb = loc.bounding_box()
-            if bb:
-                x = int(bb["width"] * 0.62)
-                y = int(bb["height"] * 0.5)
-                loc.click(position={"x": x, "y": y}, timeout=3000)
-                print(f"[info] 已按坐标点击「发布」({x},{y})")
-                return
+            import io
+            from PIL import Image
+            raw = loc.screenshot(timeout=5000)
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            w, h = img.size
+            if w < 10 or h < 10:
+                return False
+            px = img.load()
+            xs, ys = [], []
+            for y in range(0, h, 2):
+                for x in range(0, w, 2):
+                    r, g, b = px[x, y]
+                    # 品牌红判定：R 明显高于 G/B，且 R 足够亮（排除灰/白/黑）
+                    if r >= 180 and (r - g) > 100 and (r - b) > 80:
+                        xs.append(x)
+                        ys.append(y)
+            if len(xs) < 50:   # 红色像素太少 → 按钮可能未渲染/不可点
+                print(f"[warn] 像素定位未找到红色按钮（红色像素仅 {len(xs)}）")
+                return False
+            cx, cy = int(sum(xs) / len(xs)), int(sum(ys) / len(ys))
+            loc.click(position={"x": cx, "y": cy}, timeout=3000)
+            print(f"[info] 像素定位红色「发布」按钮并点击 ({cx},{cy})（样本 {len(xs)} 像素）")
+            return True
         except Exception as e:  # noqa: BLE001
-            print(f"[warn] 坐标点击发布失败，尝试穿透: {e}")
-        # 兜底：穿透/文本
+            print(f"[warn] 像素定位发布失败: {e}")
+            return False
+
+    def _click_publish_by_points(self, page, loc) -> bool:
+        """多坐标候选点逐个试（按钮常在宿主右半侧，覆盖多个比例位置）。"""
+        try:
+            bb = loc.bounding_box()
+            if not bb:
+                return False
+            points = [(0.62, 0.5), (0.7, 0.5), (0.6, 0.6), (0.8, 0.5),
+                      (0.55, 0.5), (0.75, 0.45)]
+            for fx, fy in points:
+                try:
+                    x = int(bb["width"] * fx)
+                    y = int(bb["height"] * fy)
+                    loc.click(position={"x": x, "y": y}, timeout=2000)
+                    print(f"[info] 坐标候选点击「发布」({x},{y})")
+                    return True
+                except Exception:  # noqa: BLE001
+                    continue
+            return False
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 多坐标点击失败: {e}")
+            return False
+
+    def _click_publish_fallback(self, page):
+        """兜底：文本/穿透点击「发布」。"""
         for sel in ("xhs-publish-btn >> text=发布", "button:has-text('发布')"):
             try:
                 pg_loc = page.locator(sel).first
                 pg_loc.wait_for(state="attached", timeout=2000)
                 pg_loc.click(timeout=2000)
+                print(f"[info] 文本穿透点击「发布」成功: {sel}")
                 return
             except Exception:  # noqa: BLE001
                 continue
-        print("[warn] 发布按钮点击失败")
+        print("[warn] 发布按钮点击失败（像素/坐标/文本三层均未命中）")
 
     def _check_risk_control(self, page) -> str | None:
         """检测小红书安全风控/扫码验证弹窗，命中则返回提示文案（否则 None）"""
@@ -624,6 +853,21 @@ class XhsPlaywrightPublisher(Publisher):
             try:
                 if page.get_by_text(kw).count() > 0:
                     return f"小红书安全风控：要求「{kw}」"
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def _check_content_blocked(self, page) -> str | None:
+        """检测「因违反社区规范禁止发笔记」类红色拦截提示，命中返回文案（否则 None）。
+
+        小红书发布时若内容含违规词/敏感信息，会弹红色提示并禁止发布，
+        但页面仍停留在编辑器（看起来像卡住）。此检测把「被拒」与「真卡住」区分开。
+        """
+        for kw in ("违反社区规范", "禁止发笔记", "发布失败", "内容违规", "审核不通过",
+                   "无法发布", "违规内容", "请修改"):
+            try:
+                if page.get_by_text(kw, exact=False).count() > 0:
+                    return f"小红书社区规范拦截：{kw}"
             except Exception:  # noqa: BLE001
                 continue
         return None
@@ -693,19 +937,21 @@ class XhsPlaywrightPublisher(Publisher):
         return published, real_url
 
     def _add_topics_via_button(self, page, tags: list[str]):
-        """图文模式：点「话题」按钮添加话题标签（尽力而为，不阻断发布）"""
+        """图文模式：点「话题」按钮添加话题标签；失败时绝不改写正文。"""
         try:
             btn = self._find(page, self.selectors["topic"], 5000)
             btn.click()
             page.wait_for_timeout(1000)
         except Exception as e:  # noqa: BLE001
-            print(f"[warn] 未找到「话题」按钮（{e}），改用内联 #")
-            self._add_topics_inline(page, tags)
+            print(f"[warn] 未找到「话题」按钮（{e}），已跳过话题添加（正文保持不变）")
             return
         added = 0
         for tag in tags:
             raw = tag.lstrip("#").strip()
-            if not raw:
+            # 平台话题不接受 #、空格、标点等特殊字符；非法标签直接跳过。
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9\u4e00-\u9fff]{1,20}", raw):
+                print(f"[warn] 跳过不符合平台格式的话题：{tag!r}")
                 continue
             try:
                 # 话题面板里的搜索/输入框
@@ -731,13 +977,43 @@ class XhsPlaywrightPublisher(Publisher):
         if added:
             print(f"[info] 已添加 {added} 个话题标签")
         else:
-            print("[warn] 话题面板添加未成功，标签将作为 #文本 留在正文")
-            self._add_topics_inline(page, tags)
+            print("[warn] 话题面板添加未成功，已跳过话题（正文保持不变）")
+
+    def _strip_inline_topics(self, body: str) -> str:
+        """清理正文里游离的话题 # 行（发布前用）。
+
+        生成链路本身不会在正文里加 #话题；这些一般是手动编辑或历史兜底逻辑
+        混进去的。发布前把「独立成行的 #xxx」清掉，避免正文里一堆 # 显得乱、
+        也降低被社区规范拦截的概率。真正的标签请走话题栏添加。
+        """
+        import re
+        if not body:
+            return body
+        lines = body.splitlines()
+        kept = [ln for ln in lines if not re.fullmatch(r"\s*#[\w\u4e00-\u9fff·-]+", ln)]
+        return "\n".join(kept).strip()
+
+    def _normalize_body(self, body: str) -> str:
+        """规范化正文，规避小红书编辑器的「不支持连续空行输入」限制。
+
+        小红书正文编辑器不允许连续（≥2）空行，会弹「不支持连续空行输入」并不接收
+        多余空行，导致正文被截断/吞字（表现为「发布内容与生成的不一样」）。
+        这里把连续空行压成单个空行，保留段落结构且不触发该限制。
+        """
+        if not body:
+            return body
+        import re
+        # 统一 Windows/Unix 换行，删除空白行和行尾空格。小红书编辑器不接受
+        # 自动化连续输入的空行，保留单换行即可表达分段。
+        normalized = body.replace("\r\n", "\n").replace("\r", "\n")
+        lines = [line.rstrip() for line in normalized.split("\n")]
+        return "\n".join(line for line in lines if line.strip()).strip()
 
     def _add_topics_inline(self, page, tags: list[str]):
         """长文编辑器兜底：在正文末尾输入 #话题，触发小红书话题联想并选中。
 
-        若联想未弹出，保留为正文纯文本（话题内容仍在笔记中）。
+        若联想未弹出，**不保留 # 文本**（避免污染正文），改为跳过该话题。
+        宁可少几个话题，也不要「#话题」混进正文——那会显得乱且易被社区规范拦截。
         """
         body_el = None
         try:
@@ -765,7 +1041,17 @@ class XhsPlaywrightPublisher(Publisher):
                 page.wait_for_timeout(400)
                 print(f"[info] 话题「{raw}」已通过内联联想添加")
             except Exception:  # noqa: BLE001
-                print(f"[warn] 话题「{raw}」联想未触发，已保留为正文 #文本")
+                # 联想没弹出 → 删掉刚输入的 #raw，避免污染正文
+                try:
+                    body_el.click()
+                    page.keyboard.press("End")
+                    # 选中刚输入的行并删除（连 # 一起）
+                    for _ in range(len(raw) + 2):
+                        page.keyboard.press("Backspace")
+                    page.keyboard.press("Enter")
+                except Exception:  # noqa: BLE001 —— 清理失败不强求
+                    pass
+                print(f"[warn] 话题「{raw}」联想未触发，已从正文移除（不保留 #文本）")
 
     def _resolve_images(self, draft: Draft) -> list[str]:
         """解析图片路径：draft.metadata["images"]（列表）+ ["cover"]（封面，放最前）"""

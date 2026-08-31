@@ -375,6 +375,21 @@ class TestCoverGen:
 # ---------- 发布器安全特性 ----------
 
 class TestPublisherSafety:
+    def test_real_publish_safety_lock_defaults_to_off(self, monkeypatch):
+        from core.publish_safety import REAL_PUBLISH_ENV, real_publish_enabled
+        monkeypatch.delenv(REAL_PUBLISH_ENV, raising=False)
+        assert real_publish_enabled() is False
+        monkeypatch.setenv(REAL_PUBLISH_ENV, "1")
+        assert real_publish_enabled() is True
+
+    def test_keep_browser_on_failure_is_opt_in(self):
+        pub = XhsPlaywrightPublisher(keep_browser_on_failure=True)
+        assert pub.keep_browser_on_failure is True
+
+    def test_normalize_body_removes_windows_and_blank_lines(self):
+        pub = XhsPlaywrightPublisher()
+        assert pub._normalize_body("第一段\r\n \r\n第二段\n\n第三段  ") == "第一段\n第二段\n第三段"
+
     def test_dry_run_publishes(self):
         draft = Draft(topic="t", title="标题", body="正文")
         res = DryRunPublisher().publish(draft)

@@ -12,8 +12,10 @@
 """
 from __future__ import annotations
 
+import html
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -40,6 +42,7 @@ import skills  # noqa: F401
 from core.orchestrator import Orchestrator
 from core.harness import Harness, RuleConfig
 from core.compliance import ComplianceEngine, load_compliance_config
+from core.publish_safety import real_publish_enabled, real_publish_disabled_message
 from core.style import StyleEnforcer
 from core.registry import get, route as route_skills
 from core.llm import configure as llm_configure
@@ -105,6 +108,43 @@ def _md_table(headers: list[str], rows: list[list]) -> str:
     return "\n".join(lines)
 
 
+_FIELD_LABEL = {"title": "标题", "body": "正文", "tags": "标签"}
+
+
+def _field_text(draft, field: str) -> str:
+    """取草稿某字段的文本（tags 拼成空格分隔字符串）"""
+    if field == "tags":
+        return fmt_tags(draft.tags)
+    return str(getattr(draft, field, "") or "")
+
+
+def _highlight_match(text: str, match: str) -> str:
+    """把命中的违规词用 <mark> 高亮（HTML 转义，防注入）"""
+    if not match:
+        return html.escape(text)
+    return html.escape(text).replace(html.escape(match), f"<mark>{html.escape(match)}</mark>")
+
+
+def _diff_highlight(before: str, after: str) -> str:
+    """修改前后逐字 diff：删除标红、新增标绿，其余原样（HTML 转义防注入）"""
+    import difflib
+    sm = difflib.SequenceMatcher(None, before, after)
+    out = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        b_seg = before[i1:i2]
+        a_seg = after[j1:j2]
+        if tag == "equal":
+            out.append(html.escape(a_seg))
+        elif tag == "delete":
+            out.append(f"<del style='background:#ffe0e0;color:#c62828'>{html.escape(b_seg)}</del>")
+        elif tag == "insert":
+            out.append(f"<mark style='background:#d4f7d4'>{html.escape(a_seg)}</mark>")
+        elif tag == "replace":
+            out.append(f"<del style='background:#ffe0e0;color:#c62828'>{html.escape(b_seg)}</del>")
+            out.append(f"<mark style='background:#d4f7d4'>{html.escape(a_seg)}</mark>")
+    return "".join(out)
+
+
 # ---------- 会话状态 ----------
 
 def init_state():
@@ -115,6 +155,8 @@ def init_state():
     s.setdefault("pub_confirm", False)   # 真实发布二次确认
     s.setdefault("pub_msg", "")
     s.setdefault("gen_ts", 0)            # 生成版本号：换 key 清掉旧编辑框输入
+    s.setdefault("jump_target", None)    # 合规跳转定位目标 dict(field, match, suggestion)
+    s.setdefault("last_fix", None)       # 最近一次就地修改 dict(field, before, after)
 
 
 init_state()
@@ -220,11 +262,12 @@ if page == "📝 生成与编辑":
             with st.spinner(f"生成中（{backend_key} / {chose or '默认人格'}）…"):
                 try:
                     draft = orch.run(topic=topic, user_id="web_user", skill_chain=default_chain(topic))
+                    draft.metadata["ai_generated"] = True   # 合规：默认标注 AI 生成
                     st.session_state.draft = draft
                     st.session_state.check_result = None
                     st.session_state.pub_confirm = False
                     st.session_state.gen_ts += 1   # 换 key，让编辑框展示新草稿
-                    st.success("生成完成，可在下方编辑")
+                    st.success("生成完成，可在下方编辑（发布时将标注「内容由 AI 生成」）")
                 except Exception as e:  # noqa: BLE001
                     st.error(f"生成失败: {e}")
 
@@ -256,6 +299,7 @@ if page == "📝 生成与编辑":
             draft.cover_text = cover_text or None
             draft.metadata["images"] = [p for p in images.replace("，", ",").split(",") if p.strip()]
             st.session_state.draft = draft
+            st.session_state.gen_ts += 1   # 换 key，让编辑框展示编辑后的内容
             st.session_state.check_result = None
             st.success("已应用编辑，可继续「检验」")
 
@@ -304,8 +348,84 @@ if page == "📝 生成与编辑":
             comp, style = res["compliance"], res["style"]
             with st.expander("检验报告", expanded=True):
                 st.markdown(f"**合规**：{'✅ 通过' if comp.ok else f'❌ {len(comp.hits)} 处命中'}")
-                for h in comp.hits:
-                    st.warning(f"  - {h}")
+                for idx, h in enumerate(comp.hits):
+                    hc1, hc2 = st.columns([6, 1])
+                    field_name = _FIELD_LABEL.get(h.field, "")
+                    with hc1:
+                        st.warning(f"  - {h}")
+                    with hc2:
+                        if st.button("📍 定位", key=f"jump_{idx}",
+                                     help=f"就地展开{field_name or '对应'}编辑框",
+                                     disabled=not h.field):
+                            st.session_state.jump_target = {
+                                "field": h.field, "match": h.match,
+                                "suggestion": h.suggestion, "hit_idx": idx,
+                            }
+                            st.rerun()
+
+                # ---- 就地定位编辑：点「📍 定位」后在违规项下方展开 ----
+                jump = st.session_state.get("jump_target")
+                if jump and jump.get("field"):
+                    fld = jump["field"]
+                    st.markdown("---")
+                    st.markdown(f"#### 📍 定位到「{_FIELD_LABEL.get(fld, fld)}」")
+                    cur_text = _field_text(st.session_state.draft, fld)
+                    # 高亮命中词预览
+                    st.markdown(
+                        f"命中词 <mark>{html.escape(jump.get('match') or '')}</mark>"
+                        + (f"　→ 建议：{html.escape(jump.get('suggestion'))}" if jump.get("suggestion") else ""),
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(
+                        "<div style='background:#fff5f5;padding:8px 12px;border-radius:6px;border:1px solid #f5c6cb'>"
+                        + _highlight_match(cur_text, jump.get("match") or "")
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                    new_val = st.text_area(
+                        f"就地修改「{_FIELD_LABEL.get(fld, fld)}」",
+                        cur_text,
+                        key=f"inline_fix_{fld}_{jump.get('hit_idx', 0)}",
+                        height=160 if fld == "body" else 80,
+                    )
+                    b1, b2, b3 = st.columns([1, 1, 3])
+                    if b1.button("💾 保存修改", key=f"save_fix_{fld}_{jump.get('hit_idx', 0)}",
+                                 type="primary"):
+                        d = st.session_state.draft
+                        before = cur_text
+                        if fld == "tags":
+                            d.tags = parse_tags(new_val)
+                            after_str = fmt_tags(d.tags)
+                        else:
+                            setattr(d, fld, new_val)
+                            after_str = new_val
+                        st.session_state.draft = d
+                        # 换 key（gen_ts+1）让顶部编辑框重建并读到新值。
+                        # 不要额外写 session_state[f"e_body_{..}"]，否则会与
+                        # text_area 的 value 参数冲突触发 Streamlit 警告。
+                        st.session_state.gen_ts += 1
+                        st.session_state.last_fix = {"field": fld, "before": before, "after": after_str}
+                        st.session_state.jump_target = None
+                        st.session_state.check_result = None   # 需重新检验
+                        st.rerun()
+                    if b2.button("取消", key=f"cancel_fix_{fld}_{jump.get('hit_idx', 0)}"):
+                        st.session_state.jump_target = None
+                        st.rerun()
+
+                # ---- 修改结果展示（保存后就地显示 diff 高亮） ----
+                last_fix = st.session_state.get("last_fix")
+                if last_fix:
+                    st.markdown("---")
+                    st.markdown(f"#### ✅ 已修改「{_FIELD_LABEL.get(last_fix['field'], last_fix['field'])}」")
+                    st.caption("红 = 删掉　绿 = 新增（改完请重新点「🔍 检验」）")
+                    st.markdown(
+                        "<div style='background:#fafafa;padding:8px 12px;border-radius:6px;"
+                        "border:1px solid #ddd;white-space:pre-wrap'>"
+                        + _diff_highlight(last_fix["before"], last_fix["after"])
+                        + "</div>",
+                        unsafe_allow_html=True,
+                    )
+                st.markdown("---")
                 st.markdown(f"**风格**：{'✅ 通过' if style.ok else '❌ 有超标项'}")
                 for i in style.issues:
                     st.warning(f"  - {i}")
@@ -315,17 +435,24 @@ if page == "📝 生成与编辑":
 
         # ---- 发布 ----
         pub_c1, pub_c2, pub_c3 = st.columns([1, 1, 1])
+        can_real_publish = real_publish_enabled()
+        if not can_real_publish:
+            st.info(f"🛡️ {real_publish_disabled_message()}")
         browser_ch = pub_c1.selectbox("浏览器", ["msedge", "chrome", "chromium"], index=0,
                                       help="系统 Edge/Chrome 免下载；chromium 需已装 Playwright 内核")
         headed_mode = pub_c1.checkbox("有头模式（弹出窗口，可扫码验证）", value=False,
                                       help="小红书风控要求扫码验证时勾选此项：会弹出浏览器，你用小红书APP扫码后发布")
+        keep_failure_browser = pub_c1.checkbox(
+            "调试：失败时保留浏览器", value=True, disabled=not headed_mode,
+            help="仅有头模式有效。发布失败时不自动关闭窗口，关闭窗口后才返回结果。",
+        )
         if pub_c2.button("🧪 干跑发布（不真发）", width="stretch"):
             draft = st.session_state.draft
             r = DryRunPublisher().publish(draft)
             st.info(f"{r.message}（{r.cost_ms}ms）")
 
         if pub_c3.button("🚀 真实发布", width="stretch", type="primary",
-                         disabled=not STATE_PATH.exists()):
+                          disabled=not STATE_PATH.exists() or not can_real_publish):
             if not st.session_state.pub_confirm:
                 st.session_state.pub_confirm = True
                 st.warning("⚠️ 二次确认：再次点击「真实发布」即真发到小红书")
@@ -336,6 +463,7 @@ if page == "📝 生成与编辑":
                     storage_state=str(STATE_PATH), headless=not headed_mode,
                     channel=None if browser_ch == "chromium" else browser_ch,
                     auto_approve=True, harness=orch.harness, user_id="web_user",
+                    keep_browser_on_failure=keep_failure_browser,
                 )
                 log_lines: list[str] = []
                 with st.spinner("发布中…（上传图文 → 填内容 → 点发布）"):
@@ -455,7 +583,7 @@ elif page == "🗓️ 内容库与定时":
             st.write(f"`[{r['id']}]` {r['topic']} → **{r['status']}**：{r.get('reason', r.get('url', ''))}")
         st.rerun()
     if e2.button("🚀 执行到期任务（真实发布，需已登录）", width="stretch",
-                 disabled=not STATE_PATH.exists()):
+                  disabled=not STATE_PATH.exists() or not real_publish_enabled()):
         orch, persona = build_orch()
         pub = XhsPlaywrightPublisher(storage_state=str(STATE_PATH), headless=True,
                                      auto_approve=True, harness=orch.harness, user_id="web_user")
@@ -468,7 +596,7 @@ elif page == "🗓️ 内容库与定时":
         for r in report:
             st.write(f"`[{r['id']}]` {r['topic']} → **{r['status']}**：{r.get('reason', r.get('url', ''))}")
         st.rerun()
-    st.caption("无人值守常驻请用命令行：`python main.py schedule --daemon --interval 60 --real --yes --browser msedge`")
+    st.caption("无人值守常驻请用命令行：`python main.py schedule --daemon --interval 60 --real --yes --browser msedge`（需先在 .env 解锁真实发布）")
 
 
 # ============================================================

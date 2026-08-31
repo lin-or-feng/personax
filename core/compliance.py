@@ -51,9 +51,24 @@ class ComplianceHit:
     category: str          # ad_law / medical / finance / platform
     word: str
     suggestion: str = ""
+    field: str = ""        # title / body / tags（命中位置，供 GUI 跳转定位）
+    match: str = ""        # 命中的原文片段（用于高亮）
 
     def __str__(self) -> str:
-        return f"[{self.category}] 命中「{self.word}」{('→ ' + self.suggestion) if self.suggestion else ''}"
+        loc = {"title": "标题", "body": "正文", "tags": "标签"}.get(self.field, self.field)
+        loc_part = f"「{loc}」" if loc else ""
+        sug = f"→ {self.suggestion}" if self.suggestion else ""
+        hit_part = f"命中「{self.match or self.word}」"
+        return f"[{self.category}] {loc_part} {hit_part}{sug}".replace("  ", " ")
+
+
+# 分类通用建议（按类别给替换方向；具体到词可在 compliance.yaml 的 suggestions 段覆盖）
+_CATEGORY_SUGGESTION = {
+    "ad_law": "删除绝对化用语，改「很/挺/更」等相对说法",
+    "medical": "删除疗效承诺，改为客观描述",
+    "finance": "删除收益承诺，注明风险",
+    "platform": "删除导流信息，改为「评论区交流」",
+}
 
 
 @dataclass
@@ -70,23 +85,39 @@ class ComplianceReport:
 
 
 def load_compliance_config(path: str | Path) -> dict:
-    """读取 compliance.yaml；缺失时返回内置词表，保证 fail-safe"""
+    """读取 compliance.yaml；缺失时返回内置词表，保证 fail-safe
+
+    返回 dict 结构：
+        {"wordlists": {cat: [词...]}, "suggestions": {命中词: 建议替换...}}
+    """
     p = Path(path)
     if not p.exists():
-        return _BUILTIN
+        return {"wordlists": dict(_BUILTIN), "suggestions": {}}
     with open(p, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
-    # 配置与内置合并：配置覆盖同 key 词表，缺失 key 用内置
+    # 词表：配置覆盖同 key，缺失 key 用内置
     merged = dict(_BUILTIN)
     for k, words in (data.get("wordlists") or {}).items():
         merged[k] = [str(w) for w in words]
-    return merged
+    return {
+        "wordlists": merged,
+        "suggestions": {str(k): str(v) for k, v in (data.get("suggestions") or {}).items()},
+    }
 
 
 class ComplianceEngine:
-    """合规门禁：逐词命中检测 + 正则变体（如 vx / weixin）"""
+    """合规门禁：逐词命中检测 + 正则变体（如 vx / weixin）
+
+    命中项带 field（title/body/tags）与 match（命中原文），供界面跳转定位。
+    """
 
     def __init__(self, wordlists: dict | None = None):
+        # 兼容两种传参：旧式直接传词表 dict，或新式 {"wordlists":..., "suggestions":...}
+        if isinstance(wordlists, dict) and "wordlists" in wordlists:
+            self._suggestions = wordlists.get("suggestions") or {}
+            wordlists = wordlists["wordlists"]
+        else:
+            self._suggestions = {}
         self.wordlists = wordlists or _BUILTIN
         # 预编译正则：中文词直接包含，字母词忽略大小写
         self._patterns: dict[str, list[re.Pattern]] = {}
@@ -98,22 +129,42 @@ class ComplianceEngine:
                 flag = re.IGNORECASE if w.isascii() else 0
                 self._patterns[cat].append(re.compile(re.escape(w), flag))
 
+    def _suggest(self, word: str, category: str) -> str:
+        """命中词 → 建议替换：优先 suggestions 段精确匹配，回退分类通用建议"""
+        return self._suggestions.get(word) or _CATEGORY_SUGGESTION.get(category, "")
+
+    def _check_field(self, field_name: str, text: Optional[str], hits: list[ComplianceHit]) -> int:
+        """对单个字段（标题/正文/标签）做词表检测，命中则记录 field+match。返回字符数。"""
+        if not text:
+            return 0
+        n = 0
+        for cat, pats in self._patterns.items():
+            for p in pats:
+                m = p.search(text)
+                if m:
+                    n += 1
+                    hits.append(ComplianceHit(
+                        category=cat,
+                        word=p.pattern,
+                        suggestion=self._suggest(p.pattern, cat),
+                        field=field_name,
+                        match=m.group(0),
+                    ))
+        return len(text)
+
     def check(
         self,
         title: Optional[str] = None,
         body: Optional[str] = None,
         tags: Optional[list[str]] = None,
     ) -> ComplianceReport:
-        parts: list[str] = [t for t in (title, body) if t]
-        if tags:
-            parts.append(" ".join(tags))
-        text = "\n".join(parts)
         hits: list[ComplianceHit] = []
-        for cat, pats in self._patterns.items():
-            for p in pats:
-                if p.search(text):
-                    hits.append(ComplianceHit(category=cat, word=p.pattern))
-        return ComplianceReport(ok=len(hits) == 0, hits=hits, checked_chars=len(text))
+        checked = 0
+        checked += self._check_field("title", title, hits)
+        checked += self._check_field("body", body, hits)
+        if tags:
+            checked += self._check_field("tags", " ".join(tags), hits)
+        return ComplianceReport(ok=len(hits) == 0, hits=hits, checked_chars=checked)
 
     def check_draft(self, draft: Draft) -> ComplianceReport:
         """对 Draft 全字段做门禁（商用：发布前必检）"""
