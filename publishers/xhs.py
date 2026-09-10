@@ -84,6 +84,10 @@ class PublishUnconfirmed(Exception):
     """点击发布后未检测到成功证据（不返回假成功）"""
 
 
+class AIDeclarationUnconfirmed(Exception):
+    """发布前未能确认「笔记含AI合成内容」声明已生效 —— 中止发布（防止发出未标识 AI 内容被限流）"""
+
+
 def _record_publish(mode: str, draft: Draft, result: "PublishResult", t0: float | None = None) -> None:
     """用量埋点：记录每次发布结果（success / cost_ms / mode），失败静默。"""
     try:
@@ -277,6 +281,12 @@ class XhsPlaywrightPublisher(Publisher):
                 result = PublishResult(success=False, message=str(e))
                 _record_publish("real", draft, result, _t0)
                 return result
+            except AIDeclarationUnconfirmed as e:
+                # AI 声明未确认 ≠ 重试：立即中止，避免发出未标识 AI 内容（也可能再次风控）
+                self._screenshot("ai_declaration_unconfirmed")
+                result = PublishResult(success=False, message=str(e))
+                _record_publish("real", draft, result, _t0)
+                return result
             except Exception as e:  # noqa: BLE001 —— 商用：吞异常并重试+截图
                 last_err = e
                 self._screenshot(f"fail_attempt{attempt}")
@@ -392,18 +402,20 @@ class XhsPlaywrightPublisher(Publisher):
             print(f"[warn] 切换「上传图文」失败: {e}")
         page.wait_for_timeout(2500)
 
-    def _mark_ai_generated(self, page):
-        """标注「笔记含AI合成内容」声明（合规，默认开启）。
+    def _mark_ai_generated(self, page) -> bool:
+        """标注「笔记含AI合成内容」声明并**确认已生效**（合规，默认开启）。
 
-        实际 UI（2026-08 截图核实）：发布页「内容设置」区有一个「添加内容类型声明」
-        下拉，展开后含「笔记含AI合成内容」选项。点它即完成 AI 内容声明。
-        依据：小红书社区公约 2.0 + 国家《人工智能生成合成内容标识办法》，
-        AI 生成内容须主动标识，未标识会限流/封号；如实标识不影响流量。
-        选择器按真实文案「添加内容类型声明 / 笔记含AI合成内容」精确匹配，可追加候选。
+        实际 UI：发布页「内容设置」区有「添加内容类型声明」下拉，展开后含
+        「笔记含AI合成内容」选项。点击即完成 AI 内容声明。依据小红书社区公约 2.0
+        + 国家《人工智能生成合成内容标识办法》，AI 生成内容须主动标识，未标识会
+        限流/封号；如实标识不影响流量。
+
+        返回 True = 已确认声明生效；False = 无法确认（调用方应中止发布）。
         """
         if not self.ai_generated:
             print("[info] 已关闭 AI 生成标注（ai_generated=False）")
-            return
+            # 用户显式关闭 → 视为无需标识，放行（由调用方决定是否强制）
+            return True
 
         def _click_first(match_sel: str, timeout: int = 2000) -> bool:
             """点击第一个可见候选（容错：匹配一列候选文本）"""
@@ -415,55 +427,103 @@ class XhsPlaywrightPublisher(Publisher):
             except Exception:  # noqa: BLE001
                 return False
 
-        # 1) 打开「添加内容类型声明」下拉（先滚动到可见，再精确文案，再 JS 兜底）
-        opened = False
-        try:
-            # 先 scroll_into_view：该入口在内容设置区（页面下半部），不可见时点不到
-            trigger = page.locator("text=添加内容类型声明").first
-            trigger.scroll_into_view_if_needed(timeout=3000)
-            trigger.wait_for(state="visible", timeout=3000)
-            trigger.click(timeout=3000)
-            opened = True
-        except Exception:  # noqa: BLE001
-            opened = False
-        if not opened:
-            opened = _click_first(
+        def _open_declare_panel() -> bool:
+            """打开「添加内容类型声明」下拉（滚动可见 → 精确文案 → JS 兜底）。"""
+            try:
+                trigger = page.locator("text=添加内容类型声明").first
+                trigger.scroll_into_view_if_needed(timeout=3000)
+                trigger.wait_for(state="visible", timeout=3000)
+                trigger.click(timeout=3000)
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+            if _click_first(
                 "text=添加内容类型声明, div:has-text('添加内容类型声明') span, "
                 "div[class*='declare'] >> text=添加内容类型声明",
                 timeout=1500,
-            )
-        if not opened:
+            ):
+                return True
             try:
-                opened = page.evaluate(
+                return bool(page.evaluate(
                     """() => {
                         const els = [...document.querySelectorAll('div,span,button')];
                         const t = els.find(x => x.textContent.trim() === '添加内容类型声明'
                                           && x.offsetParent !== null);
                         if (t) { t.scrollIntoView({block:'center'}); t.click(); return true; }
                         return false;
-                    }""")
+                    }"""))
             except Exception:  # noqa: BLE001
-                opened = False
-        page.wait_for_timeout(1000)
-        if not opened:
-            print("[warn] 未找到「添加内容类型声明」入口，跳过 AI 标注")
-            return
+                return False
 
-        # 2) 在展开的选项里点「笔记含AI合成内容」（可先滚动到该选项再点）
-        chosen = False
-        for sel in ("text=笔记含AI合成内容", "text=含AI合成内容", "text=AI合成内容"):
+        def _click_ai_option() -> bool:
+            """在展开的选项里点「笔记含AI合成内容」（可先滚动到该选项再点）。"""
+            for sel in ("text=笔记含AI合成内容", "text=含AI合成内容", "text=AI合成内容"):
+                try:
+                    opt = page.locator(sel).first
+                    opt.scroll_into_view_if_needed(timeout=2000)
+                    opt.wait_for(state="visible", timeout=2000)
+                    opt.click(timeout=2000)
+                    print(f"[info] 已点击「笔记含AI合成内容」（{sel}）")
+                    return True
+                except Exception:  # noqa: BLE001
+                    continue
+            return False
+
+        def _verify_selected() -> bool:
+            """回读声明是否真的被选中/生效（启发式，可能需按平台 DOM 微调）。
+
+            命中任一信号即视为确认：
+            - aria-checked / aria-selected = true
+            - class 含 active / selected / checked / chosen
+            - 选项内部含 .check / .active / .selected 等已选子元素
+            """
             try:
-                opt = page.locator(sel).first
-                opt.scroll_into_view_if_needed(timeout=2000)
-                opt.wait_for(state="visible", timeout=2000)
-                opt.click(timeout=2000)
-                chosen = True
-                print(f"[info] 已标注「笔记含AI合成内容」（{sel}）")
-                break
+                return bool(page.evaluate(
+                    """() => {
+                        const isSel = el => {
+                          const cls = (el.className||'').toString();
+                          return el.getAttribute('aria-checked')==='true'
+                              || el.getAttribute('aria-selected')==='true'
+                              || /active|selected|checked|chosen/.test(cls)
+                              || (el.querySelector('[class*="check"],[class*="active"],[class*="selected"]')!==null);
+                        };
+                        const els = [...document.querySelectorAll('div,span,li,label')];
+                        for (const el of els) {
+                          const t = (el.textContent||'').trim();
+                          if (t === '笔记含AI合成内容' || t === '含AI合成内容' || t === 'AI合成内容') {
+                            if (isSel(el)) return true;
+                          }
+                        }
+                        return false;
+                    }"""))
             except Exception:  # noqa: BLE001
-                continue
-        if not chosen:
-            print("[warn] 未找到「笔记含AI合成内容」选项，AI 标注可能未生效")
+                return False
+
+        # 点击 + 回读校验，最多若干次；任一通过即返回 True
+        max_tries = 3
+        for attempt in range(1, max_tries + 1):
+            page.wait_for_timeout(500)
+            try:
+                if not _open_declare_panel():
+                    print(f"[warn] 第{attempt}次：未找到「添加内容类型声明」入口")
+                    page.wait_for_timeout(800)
+                    continue
+                page.wait_for_timeout(800)
+                if not _click_ai_option():
+                    print(f"[warn] 第{attempt}次：未找到「笔记含AI合成内容」选项")
+                    page.wait_for_timeout(800)
+                    continue
+                page.wait_for_timeout(600)
+                if _verify_selected():
+                    print("[info] ✅ AI 生成声明已确认生效：笔记含AI合成内容")
+                    return True
+                print(f"[warn] 第{attempt}次：已点击「笔记含AI合成内容」但未能确认选中状态，重试…")
+            except Exception as e:  # noqa: BLE001
+                print(f"[warn] 第{attempt}次 AI 声明标注异常：{e}")
+            page.wait_for_timeout(800)
+
+        print("[error] 多次尝试后仍无法确认「笔记含AI合成内容」声明已生效，将中止发布。")
+        return False
 
     def _upload_images(self, page, images: list[str]) -> bool:
         """上传图片（图文模式必需 ≥1 张，图上传后标题/正文/发布按钮才出现）。
@@ -645,12 +705,17 @@ class XhsPlaywrightPublisher(Publisher):
                     if draft.tags:
                         self._add_topics_via_button(page, draft.tags)
 
-                    # AI 生成标注（合规：默认勾选「内容由 AI 生成」）
-                    try:
-                        self.ai_generated = bool(draft.metadata.get("ai_generated", True))
-                        self._mark_ai_generated(page)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[warn] AI 生成标注失败（不影响发布）: {e}")
+                    # AI 生成标注（合规：发布前必须确认「笔记含AI合成内容」已生效）
+                    self.ai_generated = bool(draft.metadata.get("ai_generated", True))
+                    if self.ai_generated:
+                        if not self._mark_ai_generated(page):
+                            raise AIDeclarationUnconfirmed(
+                                "发布前未能确认「笔记含AI合成内容」声明已生效，已中止发布。"
+                                "请等页面加载后重试；若仍失败，请在发布页手动设置"
+                                "「内容类型声明 = 笔记含AI合成内容」，避免发出未标识 AI 内容被限流。"
+                            )
+                    else:
+                        print("[info] 已关闭 AI 生成标注（ai_generated=False），发布前不要求 AI 声明")
 
                     # 点击发布
                     self._click_publish(page)
