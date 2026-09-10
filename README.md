@@ -146,7 +146,9 @@ python main.py probe --mode tuwen --upload assets/note_cover.png --browser msedg
 ## 🛡️ 安全与合规
 
 - Key 存 `.env`（gitignore），登录态 `storage_state.json` 不提交
+- **真实发布安全锁**：`XHS_REAL_PUBLISH_ENABLED=1` 才允许真发（默认关闭，仅生成/预览/干跑）
 - 发布前人工审批（`--yes` 才跳过）+ 每分钟发布限速 + **幂等**防重复发
+- **AI 声明强制校验**：发布前自动勾选「笔记含AI合成内容」并**回读确认已生效**，确认不到就**中止发布**（不发出未标识 AI 内容）
 - 合规引擎自动拦截广告法绝对化用语 / 医疗金融承诺 / 导流话术
 - 审计留痕：`publish_log.json` + 运行期 AuditLog
 - ⚠️ 自动化发布请遵守小红书平台规则，控制频率，谨慎使用
