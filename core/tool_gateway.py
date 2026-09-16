@@ -28,6 +28,31 @@ class AssistantToolGateway:
     def list_tools(self) -> list[ToolManifest]:
         return tool_manifests(self.knowledge_tool)
 
+    def as_langchain_tool(self, user_id: str):
+        """导出 LangChain Core StructuredTool，但实际执行仍必须经过本网关。"""
+
+        from langchain_core.tools import StructuredTool
+
+        manifest = self.knowledge_tool.manifest
+
+        def invoke(query: str, top_k: int = 4, min_score: float = 0.10) -> dict:
+            result = self.call(ToolCallRequest(
+                name=manifest.name,
+                arguments={"query": query, "top_k": top_k, "min_score": min_score},
+                user_id=user_id,
+            ))
+            return result.model_dump(mode="json")
+
+        return StructuredTool.from_function(
+            func=invoke,
+            name=manifest.name,
+            description=manifest.description,
+            args_schema=KnowledgeSearchInput,
+            return_direct=False,
+            tags=["personax", "read-only", "rag"],
+            metadata={"sensitive": manifest.sensitive, "version": manifest.version},
+        )
+
     def call(self, request: ToolCallRequest) -> ToolCallResult:
         tool = self._tools.get(request.name)
         if tool is None:

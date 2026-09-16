@@ -1,5 +1,26 @@
 # 更新日志（Changelog）
 
+## v2.1.0（2026-09-16）—— LangChain 工具标准化、LangGraph 真实编排与合规加固
+
+### ✨ Agent 与 LangChain 生态
+- AI 助手默认用 LangChain Core `StructuredTool` 调用只读知识检索，工具仍强制通过 Pydantic Schema、Harness 白名单/限流和 AuditLog
+- 修复原 `core/graph.py` 仅有骨架、`router` 不执行 Skill 的问题
+- 新增可运行 `LangGraphOrchestrator`：`StateGraph + RunnableLambda + MemorySaver`，风格校验失败时有界重试
+- CLI 新增 `generate --engine langgraph`；Streamlit 生成页新增 Python / LangGraph 引擎选择
+- 图节点全部复用既有 Skill 与 Harness，不绕过权限、限流和审计
+
+### 🛡️ 合规与安全
+- 修复合规配置中正则变体被错误转义的问题，“最好/最强/第一推荐”等现可正确拦截
+- 自定义词条为无效正则时回退字面匹配，保持 fail-safe
+- 新增 `scripts/check_content_compliance.py`，可在提交/发布前批量扫描 `content_bank`
+- LangGraph 的完成节点不再写入虚假 `published=true`，仅记录 `graph_complete`；真实发布仍归 Publisher 与安全锁
+
+### 🧪 验证
+- LangChain StructuredTool、LangGraph Skill/Harness 执行、checkpoint 语义、合规正则和批量扫描均有回归测试
+- 本版未进行小红书真实发布，仅执行 DryRun 和本地合规验收
+
+---
+
 ## v1.1.1（2026-09-07）—— 发布前强制校验 AI 声明
 
 ### 🛡️ 合规加固

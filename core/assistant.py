@@ -1,4 +1,4 @@
-"""PersonaX 2.0 对话 AI 助手编排。
+"""PersonaX 2.1 对话 AI 助手编排。
 
 实现一个受限的 Supervisor-Worker 流程：
 route -> (knowledge_search) -> answer -> review -> checkpoint。
@@ -29,6 +29,7 @@ from .types import (
     ChatMessage,
     RouteDecision,
     ToolCallRequest,
+    ToolCallResult,
 )
 
 
@@ -290,15 +291,22 @@ class AssistantOrchestrator:
             try:
                 cfg = self.persona.get("rag", {}) or {}
                 gateway = AssistantToolGateway(KnowledgeSearchTool(self._rag()), self.harness)
-                tool_result = gateway.call(ToolCallRequest(
-                    name="assistant_knowledge_search",
-                    arguments={
-                        "query": request.question,
-                        "top_k": max(1, int(cfg.get("assistant_top_k", 4))),
-                        "min_score": float(cfg.get("min_score", 0.10)),
-                    },
-                    user_id=request.thread_id,
-                ))
+                tool_arguments = {
+                    "query": request.question,
+                    "top_k": max(1, int(cfg.get("assistant_top_k", 4))),
+                    "min_score": float(cfg.get("min_score", 0.10)),
+                }
+                assistant_cfg = self.persona.get("assistant", {}) or {}
+                tool_runtime = str(assistant_cfg.get("tool_runtime", "langchain")).lower()
+                if tool_runtime == "langchain":
+                    raw_result = gateway.as_langchain_tool(request.thread_id).invoke(tool_arguments)
+                    tool_result = ToolCallResult.model_validate(raw_result)
+                else:
+                    tool_result = gateway.call(ToolCallRequest(
+                        name="assistant_knowledge_search",
+                        arguments=tool_arguments,
+                        user_id=request.thread_id,
+                    ))
                 if tool_result.status == "ok" and tool_result.output is not None:
                     result = tool_result.output
                     sources = result.sources
@@ -306,6 +314,7 @@ class AssistantOrchestrator:
                     detail = (
                         f"returned={len(sources)}; fusion={result.trace.get('fusion', 'n/a')}; "
                         f"dense={result.trace.get('dense_mode', 'n/a')}; "
+                        f"runtime={tool_runtime}; "
                         f"degraded={','.join(result.trace.get('degraded_components', [])) or 'none'}"
                     )
                     degraded = not bool(sources)

@@ -119,7 +119,8 @@ class ComplianceEngine:
         else:
             self._suggestions = {}
         self.wordlists = wordlists or _BUILTIN
-        # 预编译正则：中文词直接包含，字母词忽略大小写
+        # 词表按正则编译（配置明确支持“最(好|强)”这类变体）。
+        # 自定义词条若写成无效正则，fail-safe 回退为字面匹配，不让应用启动失败。
         self._patterns: dict[str, list[re.Pattern]] = {}
         for cat, words in self.wordlists.items():
             self._patterns[cat] = []
@@ -127,7 +128,11 @@ class ComplianceEngine:
                 if not w:
                     continue
                 flag = re.IGNORECASE if w.isascii() else 0
-                self._patterns[cat].append(re.compile(re.escape(w), flag))
+                try:
+                    pattern = re.compile(w, flag)
+                except re.error:
+                    pattern = re.compile(re.escape(w), flag)
+                self._patterns[cat].append(pattern)
 
     def _suggest(self, word: str, category: str) -> str:
         """命中词 → 建议替换：优先 suggestions 段精确匹配，回退分类通用建议"""

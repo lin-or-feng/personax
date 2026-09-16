@@ -44,6 +44,7 @@ rag:
 # 对话 Agent 路由：rule 默认仅 1 次回答模型调用；llm 额外做 1 次结构化路由
 assistant:
   router: rule                 # rule / llm（无效 JSON 自动回退 rule）
+  tool_runtime: langchain      # langchain(StructuredTool) / native；两者都必须经过 Harness
 
 # Harness 规则
 harness:

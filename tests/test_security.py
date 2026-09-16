@@ -1,4 +1,4 @@
-"""PersonaX 2.0 安全边界回归；全部本地执行，不访问平台。"""
+"""PersonaX 2.1 安全边界回归；全部本地执行，不访问平台。"""
 from __future__ import annotations
 
 import sqlite3

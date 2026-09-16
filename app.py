@@ -67,7 +67,7 @@ def save_persona(data: dict):
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
 
 
-def build_orch(persona_name: str | None = None):
+def build_orch(persona_name: str | None = None, engine: str = "python"):
     """构建编排器。persona_name 指定人格库中的某个人格，否则用 persona.yaml"""
     from core.persona import list_personas, resolve_persona
     if persona_name and persona_name in list_personas():
@@ -75,6 +75,10 @@ def build_orch(persona_name: str | None = None):
     else:
         persona = load_persona()
     harness = Harness(RuleConfig(**persona.get("harness", {})))
+    if engine == "langgraph":
+        from core.graph import LangGraphOrchestrator
+
+        return LangGraphOrchestrator(persona=persona, harness=harness), persona
     return Orchestrator(persona=persona, harness=harness), persona
 
 
@@ -243,6 +247,14 @@ if page == "📝 生成与编辑":
         backend_key = "offline"
     gen_model = be2.selectbox("模型", model_choices)
     gen_temp = be3.slider("温度", 0.0, 1.5, 0.8, 0.1)
+    engine_label = st.segmented_control(
+        "编排引擎",
+        ["Python（默认）", "LangGraph（状态图）"],
+        default="Python（默认）",
+        key="generation_engine",
+        help="LangGraph 模式使用 LangChain Runnable + 内存 checkpoint；两种引擎共用 Skill 和 Harness。",
+    )
+    generation_engine = "langgraph" if engine_label.startswith("LangGraph") else "python"
     from core.websearch import _enabled as ws_enabled
     st.caption(f"🌐 联网：{'✅ 开' if ws_enabled() else '⏸ 关'}（⚙️ 设置页可切换）　"
                f"🎨 封面：发布时自动生成")
@@ -295,7 +307,7 @@ if page == "📝 生成与编辑":
                           model=None if backend_key == "offline" else gen_model,
                           temperature=gen_temp)
             chose = None if gen_persona.startswith("默认") else gen_persona
-            orch, _ = build_orch(chose)
+            orch, _ = build_orch(chose, engine=generation_engine)
             with st.spinner(f"生成中（{backend_key} / {chose or '默认人格'}）…"):
                 try:
                     draft = orch.run(topic=topic, user_id="web_user", skill_chain=default_chain(topic))
@@ -587,8 +599,8 @@ elif page == "💬 AI 助手":
 
     suggested_prompt = None
     q1, q2, q3 = st.columns(3)
-    if q1.button("解释 PersonaX 2.0 架构", width="stretch"):
-        suggested_prompt = "请解释 PersonaX 2.0 的 AI 助手架构和一次对话的执行流程。"
+    if q1.button("解释 PersonaX 2.1 架构", width="stretch"):
+        suggested_prompt = "请解释 PersonaX 2.1 的 AI 助手架构和一次对话的执行流程。"
     if q2.button("分析 RAG 检索链路", width="stretch"):
         suggested_prompt = "项目里的 BM25、dense kNN、RRF 和相关性门控分别解决什么问题？"
     if q3.button("给项目优化建议", width="stretch"):

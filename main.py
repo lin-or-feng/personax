@@ -97,7 +97,17 @@ def cmd_generate(args):
         from core.registry import route as route_skills
         chain = [n for n, _ in route_skills(args.topic, top_k=3)] + ["xhs_publish"]
 
-    draft = orch.run(topic=args.topic, user_id=args.user, skill_chain=chain)
+    if getattr(args, "engine", "python") == "langgraph":
+        from core.graph import LangGraphOrchestrator
+
+        draft = LangGraphOrchestrator(persona, harness).run(
+            topic=args.topic,
+            user_id=args.user,
+            skill_chain=chain,
+            thread_id=f"cli-{args.user}",
+        )
+    else:
+        draft = orch.run(topic=args.topic, user_id=args.user, skill_chain=chain)
     _print_draft(draft)
 
     # 自动生成标题封面（多模态 · 零成本；--no-cover 关闭）
@@ -317,6 +327,8 @@ def main():
     p_gen.add_argument("--user", default="demo_user")
     p_gen.add_argument("--skill-chain", nargs="*", default=None,
                        help="指定 Skill 链，如: title_generator body_writer tag_selector cover_writer xhs_publish")
+    p_gen.add_argument("--engine", choices=["python", "langgraph"], default="python",
+                       help="编排引擎：python(默认稳定) / langgraph(状态图 + checkpoint)")
     p_gen.add_argument("--real", action="store_true", help="真实发布（默认干跑）")
     p_gen.add_argument("--publish", dest="real", action="store_true",
                        help="[旧用法别名] 等价于 --real")

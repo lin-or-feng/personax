@@ -78,6 +78,19 @@ class TestCompliance:
         rep = eng.check(title="", body="最后提醒大家一句，别踩坑")
         assert rep.ok
 
+    def test_regex_variants_from_config_are_enforced(self):
+        from core.compliance import load_compliance_config
+
+        eng = ComplianceEngine(load_compliance_config("config/compliance.yaml"))
+        rep = eng.check(title="最好的选择", body="这是第一推荐")
+        assert not rep.ok
+        assert {hit.match for hit in rep.hits} >= {"最好", "第一推荐"}
+
+    def test_invalid_custom_regex_falls_back_to_literal(self):
+        eng = ComplianceEngine({"custom": ["["]})
+        rep = eng.check(title="[测试", body="")
+        assert not rep.ok and rep.hits[0].match == "["
+
     def test_config_fail_safe(self):
         # 配置文件不存在时用内置词表，不崩溃
         from core.compliance import load_compliance_config

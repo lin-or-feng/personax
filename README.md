@@ -1,8 +1,8 @@
-# PersonaX 2.0 🍃 内容生成、知识问答与安全发布 Agent
+# PersonaX 2.1 🍃 内容生成、知识问答与安全发布 Agent
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-87%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-92%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
@@ -14,42 +14,50 @@
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
 - **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、87 项 pytest 全绿
+- **LangChain 生态实际接入**：助手工具走 `StructuredTool`；内容编排可切换 `StateGraph + RunnableLambda + MemorySaver`
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、92 项 pytest 全绿
 
-## 🆕 PersonaX 2.0：八个 Agent 模块的项目化落地
+## 🆕 PersonaX 2.1：八个 Agent 模块的项目化落地
 
-2.0 没有把所有概念堆成多个重型服务，而是围绕本地 3B/7B 模型做了一条可运行、可解释、可测试的对话链路：
+2.1 没有把所有概念堆成多个重型服务，而是围绕本地 3B/7B 模型做了一条可运行、可解释、可测试的对话链路：
 
 ```text
 用户问题
   → Supervisor 路由（默认规则 / 可选 LLM JSON，失败回退）
-  → 只读工具网关（Schema + Harness + AuditLog）
+  → LangChain StructuredTool → 只读工具网关（Schema + Harness + AuditLog）
   → Retriever Worker（BM25 + dense kNN + RRF + min_score）
   → Answerer Worker（一次 LLM 调用，结合最近 8 条消息）
   → Reviewer Worker（非空与引用检查）
   → SQLite Checkpoint + AuditLog + usage trace
 ```
 
-| 教学模块 | PersonaX 2.0 实现 | 边界说明 |
+| 教学模块 | PersonaX 2.1 实现 | 边界说明 |
 |---|---|---|
 | 1. Agent 认知与选型 | 采用显式、最多 4 步的 Agent loop；简单问候跳过检索 | 本地场景不为框架而框架 |
 | 2. LLM 原语 | 所有生成统一走 `core.llm.complete()`；可选 Pydantic 结构化路由、JSON 解析与确定性回退 | `rule` 默认只调用一次 LLM；`llm` 路由会额外增加一次小调用 |
-| 3. 状态机 | `AssistantRequest/Response`、显式 Trace、SQLite Checkpointer、最大步数 | 助手状态机用轻量 Python 编排；内容流水线仍保留可选 LangGraph |
+| 3. 状态机 | 助手有显式 Trace/Checkpoint；内容链提供真实 `StateGraph + MemorySaver` 引擎 | 默认 Python 引擎保持低开销，CLI/UI 可显式切到 LangGraph |
 | 4. Agentic RAG | 按需检索、混合召回、门控和回答引用；query enhancer / HyDE / dense / reranker 可独立降级 | dense 失败仍保留 BM25 + RRF，reranker 失败保留融合顺序 |
 | 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
-| 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway`：Pydantic I/O、Manifest、JSON Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
+| 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway` + LangChain `StructuredTool`：Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
 | 7. Eval & Observability | 8 条离线助手回归集；路由、引用、步数、回答率；UI 展示逐步 Trace | 该评测不代表真实 LLM 回答质量，后续再扩充人工/LLM-as-Judge 集合 |
 | 8. 生产化 | 上下文裁剪、会话级限流、最大步数、组件级故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
 
 助手严格只读：它能查询知识库、解释项目和给出建议，但没有真实发布工具；发布仍必须经过现有人工确认与安全锁。
+
+### LangChain / LangGraph 到底用在哪里
+
+- `core/tool_gateway.py`：把只读知识检索导出为 LangChain Core `StructuredTool`，输入仍用 Pydantic Schema，执行仍必须通过 Harness。
+- `core/graph.py`：用 LangGraph `StateGraph`、LangChain `RunnableLambda` 和 `MemorySaver` 组成可执行的 Skill 状态图，包含风格校验和有界重试。
+- CLI 使用 `python main.py generate --topic "..." --engine langgraph`；可视化生成页可选「LangGraph（状态图）」。
+- 项目没有为了“用框架”强行改写 BM25/RRF 等已有可测试算法；LangChain 负责工具标准化和可组合执行，检索算法仍由 PersonaX 控制。
 
 ## 🏗️ 架构
 
 ```
 接入层     main.py (CLI) + app.py (Streamlit 可视化)
    ↓
-编排层     orchestrator.py（内容 Skill 链）+ assistant.py（对话 Supervisor-Worker）
-           + graph.py（LangGraph，可选）
+编排层     orchestrator.py（默认 Python Skill 链）+ assistant.py（对话 Supervisor-Worker）
+           + graph.py（LangGraph StateGraph + LangChain Runnable，可选切换）
    ↓
 能力层     skills/（标题/正文/标签/封面/就绪门禁）+ rag.py + llm.py（DeepSeek）
    ↓
@@ -204,6 +212,7 @@ python main.py login --browser msedge    # 弹浏览器扫码登录，生成 sto
 ```bash
 python main.py generate --topic "秋招穿搭"
 python main.py generate --topic "考研英语" --persona 干货知识风   # 按人格生成
+python main.py generate --topic "Agent 学习" --engine langgraph    # LangGraph 状态图，仍只干跑
 ```
 
 ### 4. 真实发布
@@ -236,10 +245,11 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 87 项单测
+pytest tests/            # 92 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
 python -m eval.rag_scorer --top-k 1  # RAG Recall@K / MRR
+python scripts/check_content_compliance.py  # 批量检查 content_bank 稿件
 python main.py notes --browser msedge   # 核实真实发布的笔记
 ```
 
@@ -261,7 +271,7 @@ personax/
 │   ├── assistant.py        # 对话 Supervisor-Worker + Checkpointer
 │   ├── assistant_tools.py  # 类型化检索工具 + MCP-ready Manifest
 │   ├── tool_gateway.py     # 只读工具白名单 + Schema + Harness + Audit
-│   ├── graph.py            # LangGraph 图编排（可选）
+│   ├── graph.py            # LangGraph StateGraph + LangChain Runnable 执行器
 │   ├── harness.py          # 规则引擎（限流/审批/审计）
 │   ├── compliance.py       # 合规引擎
 │   ├── rag.py              # RAG（BM25 + dense kNN + RRF + 可选重排）
@@ -273,7 +283,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（87 项）
+└── tests/                  # pytest（92 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -299,6 +309,7 @@ python main.py probe --mode tuwen --upload assets/note_cover.png --browser msedg
 - 发布前人工审批（`--yes` 才跳过）+ 每分钟发布限速 + **幂等**防重复发
 - **AI 声明强制校验**：发布前自动勾选「笔记含AI合成内容」并**回读确认已生效**，确认不到就**中止发布**（不发出未标识 AI 内容）
 - 合规引擎自动拦截广告法绝对化用语 / 医疗金融承诺 / 导流话术
+- 合规词表支持正则变体（如“最(好|强)”），无效自定义正则回退字面匹配，避免启动失败
 - **对话助手只读**：工具清单仅包含本地知识检索，不暴露发布能力；检索片段作为不可信资料隔离注入提示词
 - **会话级限流**：Streamlit 重跑时复用当前会话的 Harness，不会因每次点击重建对象而清空限额
 - **外部链接白名单**：知识库来源仅保留 `http/https` 链接，其他协议不会在页面上生成可点击链接
@@ -311,6 +322,7 @@ python main.py probe --mode tuwen --upload assets/note_cover.png --browser msedg
 
 ```powershell
 & .\.venv\Scripts\python.exe scripts\check_secrets.py --strict
+& .\.venv\Scripts\python.exe scripts\check_content_compliance.py
 & .\.venv\Scripts\python.exe -m pytest tests\test_security.py
 & .\.venv\Scripts\python.exe -m pytest tests
 ```
@@ -353,12 +365,12 @@ python scripts/install_hooks.py
 
 - 话题「话题芯片」暂未自动添加（网页编辑器话题面板交互复杂，标签以 `#文本` 留正文，可在 App 补加）
 - VectorStore 为内存实现（接口已抽象，可换 Milvus/Qdrant）
-- LangGraph 图编排为可选路径（纯 Python 编排器已可用）
+- LangGraph 编排已可运行且可在 CLI/UI 切换，但当前仅使用进程内 `MemorySaver`，不是跨进程持久化状态
 - 单账号设计（多账号/并发为后续方向）
 
 ## 🧰 技术栈
 
-Python 3.10+ · DeepSeek (OpenAI SDK) · Playwright · Pydantic · Streamlit · LangGraph(可选) · PyYAML · pytest
+Python 3.10+ · DeepSeek (OpenAI SDK) · Playwright · Pydantic · Streamlit · LangChain Core · LangGraph · PyYAML · pytest
 
 ## 📄 License
 

@@ -38,6 +38,24 @@
 
 本轮增加的故障注入覆盖：LLM 路由非法 JSON、未知工具、工具参数越界、embedding 不可用、reranker 不可用、query enhancer/HyDE 不可用。相应结果均为受控阻断或降级，未进入发布链路。
 
+## 阶段 3：PersonaX 2.1 LangChain / LangGraph / 合规验收
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 完整单测 | `python -m pytest tests` | 92 passed，0 failed，1.45s（最终提交前重跑） |
+| LangChain 工具路径 | 本机 Ollama 单轮问答 | Retriever Trace 包含 `runtime=langchain`；4 个来源，dense exact kNN，无检索降级 |
+| LangGraph CLI | `LLM_BACKEND=offline python main.py generate --topic ... --engine langgraph --no-cover` | exit 0；真实执行 Skill/Harness/风格重试/就绪门禁；DryRun 成功，`publish_ready=True` |
+| LangGraph 安全语义 | `tests/test_langgraph_runtime.py` | 图完成只记录 `graph_complete`，不伪造 `published`；敏感 Skill 仍写入审批审计 |
+| 批量稿件合规 | `python scripts/check_content_compliance.py` | `content_bank` 3/3 通过，0 条违规 |
+| 合规正则回归 | `tests/test_commercial.py` | “最好”、“第一推荐”可正确拦截；“最后”不误伤；无效正则 fail-safe 回退字面匹配 |
+| Ollama 关闭降级 | `python -m eval.rag_scorer --top-k 1` | 11434 不可达时自动降级 BM25/RRF；6 条 Recall@1=0.8333，无崩溃 |
+| Ollama 恢复复测 | 启动 Ollama 后重跑同一评测 | `ollama:bge-m3`；Recall@1=1.0，MRR=1.0；156 cache hits / 0 misses，无降级 |
+| Streamlit 冒烟 | `streamlit.testing.v1.AppTest` | 0 个页面异常 |
+| Python 语法 | `python -m py_compile ...` | 通过 |
+| 密钥/敏感文件 | `python scripts/check_secrets.py --strict` | 通过；扫描 213 个文件，0 个可提交危险项 |
+
+2.1 中“使用 LangChain”的边界：助手检索工具使用 LangChain Core `StructuredTool`；内容状态图使用 LangChain `RunnableLambda` 与 LangGraph `StateGraph/MemorySaver`。BM25、RRF、dense kNN 仍是项目内可测试实现，没有换成不透明的黑盒封装。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。

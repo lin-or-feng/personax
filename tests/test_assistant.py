@@ -1,4 +1,4 @@
-"""PersonaX 2.0 对话助手：路由、引用、工具管控、状态与上下文测试。"""
+"""PersonaX 2.1 对话助手：路由、引用、工具管控、状态与上下文测试。"""
 from __future__ import annotations
 
 import shutil

@@ -93,6 +93,13 @@ def test_read_only_tool_gateway_validates_and_audits_calls():
     assert {item.name for item in gateway.list_tools()} == {"assistant_knowledge_search"}
     assert any(item["event"] == "tool_completed" for item in harness.audit.entries)
 
+    langchain_tool = gateway.as_langchain_tool("langchain-user")
+    langchain_result = langchain_tool.invoke(
+        {"query": "BM25 RRF", "top_k": 1, "min_score": 0.0})
+    assert langchain_tool.name == "assistant_knowledge_search"
+    assert langchain_result["status"] == "ok"
+    assert langchain_result["output"]["sources"]
+
 
 def test_read_only_tool_gateway_blocks_unknown_and_invalid_calls():
     harness = Harness(RuleConfig(rate_limit=5))
@@ -155,3 +162,18 @@ def test_query_enhancer_and_hyde_failure_fall_back_to_rules():
     hits = pipeline.retrieve_hits("PersonaX BM25", top_k=1)
     assert hits
     assert pipeline.last_trace["degraded_components"] == ["query_enhancer", "hyde"]
+
+
+def test_assistant_uses_langchain_structured_tool_by_default():
+    service = AssistantOrchestrator(
+        {"rag": {"min_score": 0.0, "assistant_top_k": 1}},
+        rag_pipeline=_pipeline(),
+        complete_fn=lambda prompt, **kwargs: "根据资料，这是混合检索 [1]。",
+    )
+    response = service.reply(AssistantRequest(
+        question="PersonaX 怎么做 BM25 和 RRF？",
+        thread_id="langchain-runtime",
+    ))
+    retriever = next(step for step in response.trace if step.worker == "retriever")
+    assert retriever.status == "ok"
+    assert "runtime=langchain" in retriever.detail
