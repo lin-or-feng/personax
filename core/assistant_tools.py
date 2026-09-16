@@ -5,7 +5,9 @@ Pydantic 输入/输出 Schema 可被后续 MCP adapter 直接复用。
 """
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlsplit
 
 from .rag import RAGPipeline
 from .types import (
@@ -54,9 +56,9 @@ class KnowledgeSearchTool:
             excerpt = " ".join(hit.chunk.text.split())[:360]
             sources.append(AssistantSource(
                 ref_id=str(index),
-                title=title,
-                source=source_path,
-                source_url=str(metadata.get("source_url") or ""),
+                title=sanitize_source_text(title, fallback=f"知识片段 {index}"),
+                source=sanitize_source_text(source_path),
+                source_url=sanitize_source_url(metadata.get("source_url")),
                 excerpt=excerpt,
                 score=round(max(hit.lexical_score, hit.dense_score), 4),
             ))
@@ -69,3 +71,31 @@ def tool_manifests(tool: KnowledgeSearchTool) -> list[ToolManifest]:
     """集中暴露工具清单，供 UI、测试和未来 MCP server 发现。"""
 
     return [tool.manifest]
+
+
+def sanitize_source_url(value: Any) -> str:
+    """只允许可明确展示的 HTTP(S) 来源链接。
+
+    知识库 front-matter 是本地可编辑数据，不应被默认信任为
+    安全 URL。拒绝 javascript/file/data 等协议与内嵌账号信息。
+    """
+
+    candidate = str(value or "").strip()
+    if not candidate or len(candidate) > 2_048:
+        return ""
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    return candidate
+
+
+def sanitize_source_text(value: Any, *, fallback: str = "") -> str:
+    """压平来源标题/路径，避免未受信内容破坏 Markdown 链接标签。"""
+
+    text = re.sub(r"\s+", " ", str(value or "")).strip()[:240]
+    return text.translate(str.maketrans({"[": "［", "]": "］", "(": "（", ")": "）"})) or fallback

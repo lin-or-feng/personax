@@ -160,10 +160,14 @@ def _render_assistant_meta(message: dict) -> None:
                 origin = source.get("source") or "本地知识库"
                 score = float(source.get("score") or 0.0)
                 if url:
-                    st.markdown(f"**[{ref}] [{title}]({url})** · `{origin}` · 相关度 {score:.3f}")
+                    st.link_button(
+                        f"[{ref}] {title} · {origin} · 相关度 {score:.3f}",
+                        url,
+                        width="content",
+                    )
                 else:
-                    st.markdown(f"**[{ref}] {title}** · `{origin}` · 相关度 {score:.3f}")
-                st.caption(source.get("excerpt") or "")
+                    st.text(f"[{ref}] {title} · {origin} · 相关度 {score:.3f}")
+                st.text(source.get("excerpt") or "")
     trace = message.get("trace") or []
     if trace:
         with st.expander(f"🔎 Agent Trace（{len(trace)} 步）"):
@@ -538,7 +542,7 @@ elif page == "💬 AI 助手":
     st.header("💬 PersonaX AI 助手")
     st.caption("按需检索本地知识库，回答附来源与执行轨迹。助手没有发布权限，不会触发真实发布。")
 
-    from core.assistant import AssistantCheckpointStore, AssistantOrchestrator
+    from core.assistant import AssistantCheckpointStore, AssistantOrchestrator, get_session_harness
     from core.llm import _backend, _ollama_reachable
     from core.types import AssistantRequest, ChatMessage
 
@@ -613,7 +617,7 @@ elif page == "💬 AI 助手":
             st.markdown(prompt)
 
         persona = load_persona()
-        harness = Harness(RuleConfig(**persona.get("harness", {})))
+        harness = get_session_harness(st.session_state, persona)
         service = AssistantOrchestrator(
             persona,
             harness=harness,

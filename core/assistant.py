@@ -10,8 +10,9 @@ import json
 import re
 import sqlite3
 import time
+from collections.abc import MutableMapping
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import yaml
 
@@ -127,6 +128,22 @@ def should_retrieve(question: str, use_knowledge: bool = True) -> bool:
     return not any(re.fullmatch(pattern, compact) for pattern in direct_patterns)
 
 
+def get_session_harness(state: MutableMapping[str, Any], persona: dict) -> Harness:
+    """复用单个 UI 会话的 Harness，避免 Streamlit rerun 重置限流计数。"""
+
+    harness_config = persona.get("harness", {}) or {}
+    fingerprint = json.dumps(harness_config, ensure_ascii=False, sort_keys=True)
+    if state.get("assistant_harness_fingerprint") != fingerprint:
+        state["assistant_harness"] = Harness(RuleConfig(**harness_config))
+        state["assistant_harness_fingerprint"] = fingerprint
+    harness = state.get("assistant_harness")
+    if not isinstance(harness, Harness):
+        harness = Harness(RuleConfig(**harness_config))
+        state["assistant_harness"] = harness
+        state["assistant_harness_fingerprint"] = fingerprint
+    return harness
+
+
 class AssistantOrchestrator:
     """有状态、可审计、最大步数受限的对话编排器。"""
 
@@ -176,9 +193,22 @@ class AssistantOrchestrator:
     def _knowledge_context(sources: list[AssistantSource]) -> str:
         if not sources:
             return "（未检索到达到相关性门槛的本地资料）"
-        return "\n\n".join(
-            f"[{source.ref_id}] {source.title}\n{source.excerpt}"
-            for source in sources
+        # 用 JSON 并转义尖括号，确保恶意片段不能闭合资料边界。
+        payload = json.dumps(
+            [
+                {
+                    "ref_id": source.ref_id,
+                    "title": source.title,
+                    "excerpt": source.excerpt,
+                }
+                for source in sources
+            ],
+            ensure_ascii=False,
+        ).replace("<", r"\u003c").replace(">", r"\u003e")
+        return (
+            "<untrusted_knowledge_json>\n"
+            f"{payload}\n"
+            "</untrusted_knowledge_json>"
         )
 
     def reply(self, request: AssistantRequest) -> AssistantResponse:

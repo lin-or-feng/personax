@@ -2,7 +2,7 @@
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-73%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-79%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
@@ -14,7 +14,7 @@
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
 - **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、73 项 pytest 全绿
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、79 项 pytest 全绿
 
 ## 🆕 PersonaX 2.0：八个 Agent 模块的项目化落地
 
@@ -227,7 +227,7 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 73 项单测
+pytest tests/            # 79 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
 python -m eval.rag_scorer --top-k 1  # RAG Recall@K / MRR
@@ -263,7 +263,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（73 项）
+└── tests/                  # pytest（79 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -289,8 +289,23 @@ python main.py probe --mode tuwen --upload assets/note_cover.png --browser msedg
 - 发布前人工审批（`--yes` 才跳过）+ 每分钟发布限速 + **幂等**防重复发
 - **AI 声明强制校验**：发布前自动勾选「笔记含AI合成内容」并**回读确认已生效**，确认不到就**中止发布**（不发出未标识 AI 内容）
 - 合规引擎自动拦截广告法绝对化用语 / 医疗金融承诺 / 导流话术
+- **对话助手只读**：工具清单仅包含本地知识检索，不暴露发布能力；检索片段作为不可信资料隔离注入提示词
+- **会话级限流**：Streamlit 重跑时复用当前会话的 Harness，不会因每次点击重建对象而清空限额
+- **外部链接白名单**：知识库来源仅保留 `http/https` 链接，其他协议不会在页面上生成可点击链接
 - 审计留痕：`publish_log.json` + 运行期 AuditLog
 - ⚠️ 自动化发布请遵守小红书平台规则，控制频率，谨慎使用
+
+### 安全回归与验收
+
+安全检查覆盖密钥/敏感文件泄漏、真实发布默认关闭、工具权限边界、会话限流、SQL 参数化、恶意知识片段隔离和外部链接协议校验。所有检查只使用本地模拟数据，**不登录、不调用小红书、不真实发布**。
+
+```powershell
+& .\.venv\Scripts\python.exe scripts\check_secrets.py --strict
+& .\.venv\Scripts\python.exe -m pytest tests\test_security.py
+& .\.venv\Scripts\python.exe -m pytest tests
+```
+
+本次完整的命令、环境、通过数和剩余边界记录在 [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md)。
 
 ## 🔒 上传 GitHub 前安全校验
 
