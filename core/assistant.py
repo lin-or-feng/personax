@@ -20,13 +20,15 @@ from .assistant_tools import KnowledgeSearchTool
 from .harness import Harness, RuleConfig
 from .llm import complete
 from .rag import RAGPipeline, build_rag_from_dir
+from .tool_gateway import AssistantToolGateway
 from .types import (
     AgentTraceStep,
     AssistantRequest,
     AssistantResponse,
     AssistantSource,
     ChatMessage,
-    KnowledgeSearchInput,
+    RouteDecision,
+    ToolCallRequest,
 )
 
 
@@ -180,6 +182,56 @@ class AssistantOrchestrator:
         return self._rag_pipeline
 
     @staticmethod
+    def _parse_route_decision(raw: str) -> RouteDecision:
+        """容忍 Markdown code fence，但只接受严格 JSON 对象中的结构化字段。"""
+
+        cleaned = raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.I)
+        match = re.search(r"\{.*\}", cleaned, flags=re.S)
+        if not match:
+            raise ValueError("路由器未返回 JSON 对象")
+        payload = json.loads(match.group(0))
+        decision = RouteDecision.model_validate(payload)
+        return decision.model_copy(update={"router": "llm"})
+
+    def _route(self, request: AssistantRequest) -> RouteDecision:
+        if not request.use_knowledge:
+            return RouteDecision(route="direct", reason="用户关闭本地知识库", router="manual")
+
+        assistant_cfg = self.persona.get("assistant", {}) or {}
+        router_mode = str(assistant_cfg.get("router", "rule")).strip().lower()
+        if router_mode != "llm":
+            route = "knowledge" if should_retrieve(request.question, True) else "direct"
+            return RouteDecision(route=route, reason="可解释的问候/知识规则", router="rule")
+
+        prompt = (
+            "判断下面问题是否需要检索 PersonaX 本地知识库。\n"
+            "仅返回 JSON："
+            '{"route":"direct|knowledge","reason":"不超过50字"}\n'
+            f"问题：{request.question}"
+        )
+        try:
+            raw = self.complete_fn(
+                prompt,
+                system=(
+                    "你是只读路由器，不回答问题、不调用工具。"
+                    "问候/致谢走 direct，需要项目或知识事实走 knowledge。"
+                ),
+                temperature=0.0,
+                max_tokens=100,
+                max_retries=1,
+            )
+            return self._parse_route_decision(raw)
+        except Exception as exc:  # noqa: BLE001 - 结构化路由失败时必须确定性回退
+            route = "knowledge" if should_retrieve(request.question, True) else "direct"
+            return RouteDecision(
+                route=route,
+                reason=f"LLM 路由失败，回退规则: {type(exc).__name__}",
+                router="fallback",
+            )
+
+    @staticmethod
     def _history_text(history: list[ChatMessage], keep: int = 8) -> str:
         rows = history[-keep:]
         if not rows:
@@ -218,41 +270,52 @@ class AssistantOrchestrator:
         degraded = False
         step = 1
 
-        retrieve = should_retrieve(request.question, request.use_knowledge)
-        route = "knowledge" if retrieve else "direct"
+        route_decision = self._route(request)
+        route = route_decision.route
+        retrieve = route == "knowledge"
+        route_reason = re.sub(r"\s+", " ", route_decision.reason).strip()[:160]
         trace.append(AgentTraceStep(
             step=step,
             worker="supervisor",
             action="route",
-            detail=f"route={route}; max_steps={request.max_steps}",
+            detail=(
+                f"route={route}; router={route_decision.router}; "
+                f"reason={route_reason}; max_steps={request.max_steps}"
+            ),
         ))
 
         if retrieve and step < request.max_steps:
             step += 1
             tool_started = time.perf_counter()
-            allowed, reason = self.harness.guard("assistant_knowledge_search", request.thread_id)
-            if allowed:
-                try:
-                    cfg = self.persona.get("rag", {}) or {}
-                    result = KnowledgeSearchTool(self._rag()).run(KnowledgeSearchInput(
-                        query=request.question,
-                        top_k=max(1, int(cfg.get("assistant_top_k", 4))),
-                        min_score=float(cfg.get("min_score", 0.10)),
-                    ))
+            try:
+                cfg = self.persona.get("rag", {}) or {}
+                gateway = AssistantToolGateway(KnowledgeSearchTool(self._rag()), self.harness)
+                tool_result = gateway.call(ToolCallRequest(
+                    name="assistant_knowledge_search",
+                    arguments={
+                        "query": request.question,
+                        "top_k": max(1, int(cfg.get("assistant_top_k", 4))),
+                        "min_score": float(cfg.get("min_score", 0.10)),
+                    },
+                    user_id=request.thread_id,
+                ))
+                if tool_result.status == "ok" and tool_result.output is not None:
+                    result = tool_result.output
                     sources = result.sources
                     status = "ok" if sources else "degraded"
                     detail = (
                         f"returned={len(sources)}; fusion={result.trace.get('fusion', 'n/a')}; "
-                        f"dense={result.trace.get('dense_mode', 'n/a')}"
+                        f"dense={result.trace.get('dense_mode', 'n/a')}; "
+                        f"degraded={','.join(result.trace.get('degraded_components', [])) or 'none'}"
                     )
                     degraded = not bool(sources)
-                except Exception as exc:  # noqa: BLE001 - 检索失败应降级为直接回答
-                    status = "degraded"
-                    detail = f"检索失败，已降级：{type(exc).__name__}: {exc}"
+                else:
+                    status = tool_result.status
+                    detail = tool_result.error
                     degraded = True
-            else:
-                status = "blocked"
-                detail = reason
+            except Exception as exc:  # noqa: BLE001 - 检索构建失败应降级为直接回答
+                status = "degraded"
+                detail = f"检索失败，已降级：{type(exc).__name__}: {exc}"
                 degraded = True
             trace.append(AgentTraceStep(
                 step=step,

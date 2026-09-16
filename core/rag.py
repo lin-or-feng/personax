@@ -414,35 +414,61 @@ class RAGPipeline:
         return [part.strip() for part in re.split(r"[、和及与]", query) if part.strip()]
 
     def retrieve_hits(self, query: str, top_k: int = 5) -> list[RetrievalHit]:
-        rewritten = self.multi_query(query)
+        degraded_components: list[str] = []
+        degradation_reasons: dict[str, str] = {}
+
+        def mark_degraded(component: str, exc: Exception) -> None:
+            if component not in degraded_components:
+                degraded_components.append(component)
+            degradation_reasons[component] = type(exc).__name__
+
+        try:
+            rewritten = self.multi_query(query)
+        except Exception as exc:  # noqa: BLE001 - LLM query rewrite 失败时回退规则改写
+            mark_degraded("query_enhancer", exc)
+            rewritten = RuleBasedQueryEnhancer().rewrite(query)
         decomposed = self.decompose(query)
         queries = list(dict.fromkeys(rewritten + decomposed))
         if self.enable_hyde:
-            hyde_doc = self.enhancer.hyde(query)
-            if hyde_doc:
-                queries.append(hyde_doc)
+            try:
+                hyde_doc = self.enhancer.hyde(query)
+                if hyde_doc:
+                    queries.append(hyde_doc)
+            except Exception as exc:  # noqa: BLE001 - HyDE 是可选增强，不应使基础检索失败
+                mark_degraded("hyde", exc)
 
         result_lists: list[list[tuple[Chunk, float]]] = []
         fetch_k = max(top_k * 3, 10)
         for variant in queries:
             result_lists.append(self.store.search(variant, fetch_k, index="raw"))
             result_lists.append(self.store.search(variant, fetch_k, index="metadata"))
-            result_lists.append(self.store.dense_search(variant, fetch_k))
+            try:
+                result_lists.append(self.store.dense_search(variant, fetch_k))
+            except Exception as exc:  # noqa: BLE001 - embedding 故障时保留 BM25/RRF 结果
+                mark_degraded("dense_search", exc)
 
         fused = reciprocal_rank_fusion(result_lists)
         candidates = [self.store.chunks[cid] for cid, _ in fused[:fetch_k]]
         fused_scores = dict(fused)
         rerank_scores: dict[str, float] = {}
         if self.reranker:
-            reranked = self.reranker.rerank(query, candidates, top_k=fetch_k)
-            candidates = [chunk for chunk, _ in reranked]
-            rerank_scores = {chunk.id: score for chunk, score in reranked}
+            try:
+                reranked = self.reranker.rerank(query, candidates, top_k=fetch_k)
+                candidates = [chunk for chunk, _ in reranked]
+                rerank_scores = {chunk.id: score for chunk, score in reranked}
+            except Exception as exc:  # noqa: BLE001 - 重排失败时继续使用 RRF 顺序
+                mark_degraded("reranker", exc)
 
-        query_vector = self.store.embedder.encode([query])[0] if candidates else []
+        query_vector: list[float] = []
+        if candidates and "dense_search" not in degraded_components:
+            try:
+                query_vector = self.store.embedder.encode([query])[0]
+            except Exception as exc:  # noqa: BLE001 - 门控仍可依赖 lexical score
+                mark_degraded("dense_scoring", exc)
         hits = []
         for chunk in candidates[:top_k]:
             lexical = self.store.similarity(query, chunk)
-            dense = max(0.0, _cosine(query_vector, chunk.embedding))
+            dense = max(0.0, _cosine(query_vector, chunk.embedding)) if query_vector else 0.0
             hits.append(RetrievalHit(
                 chunk=chunk,
                 score=rerank_scores.get(chunk.id, fused_scores.get(chunk.id, 0.0)),
@@ -454,12 +480,17 @@ class RAGPipeline:
             "query": query,
             "queries": queries,
             "embedding_backend": self.store.embedder.name,
-            "dense_mode": self.store.last_dense_mode,
+            "dense_mode": (
+                "unavailable" if "dense_search" in degraded_components
+                else self.store.last_dense_mode
+            ),
             "fusion": "rrf",
             "reranker": getattr(self.reranker, "model_name", "none"),
             "candidates": len(candidates),
             "embedding_cache_hits": getattr(self.store.embedder, "cache_hits", 0),
             "embedding_cache_misses": getattr(self.store.embedder, "cache_misses", 0),
+            "degraded_components": degraded_components,
+            "degradation_reasons": degradation_reasons,
         }
         return hits
 

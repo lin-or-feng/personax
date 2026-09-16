@@ -41,6 +41,10 @@ rag:
   reranker: none                   # none / cross-encoder
   reranker_model: BAAI/bge-reranker-base
 
+# 对话 Agent 路由：rule 默认仅 1 次回答模型调用；llm 额外做 1 次结构化路由
+assistant:
+  router: rule                 # rule / llm（无效 JSON 自动回退 rule）
+
 # Harness 规则
 harness:
   max_retries: 2

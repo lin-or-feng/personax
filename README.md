@@ -2,7 +2,7 @@
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-79%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-87%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
@@ -14,7 +14,7 @@
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
 - **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、79 项 pytest 全绿
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、87 项 pytest 全绿
 
 ## 🆕 PersonaX 2.0：八个 Agent 模块的项目化落地
 
@@ -22,7 +22,8 @@
 
 ```text
 用户问题
-  → Supervisor 路由（直接回答 / 知识检索）
+  → Supervisor 路由（默认规则 / 可选 LLM JSON，失败回退）
+  → 只读工具网关（Schema + Harness + AuditLog）
   → Retriever Worker（BM25 + dense kNN + RRF + min_score）
   → Answerer Worker（一次 LLM 调用，结合最近 8 条消息）
   → Reviewer Worker（非空与引用检查）
@@ -32,13 +33,13 @@
 | 教学模块 | PersonaX 2.0 实现 | 边界说明 |
 |---|---|---|
 | 1. Agent 认知与选型 | 采用显式、最多 4 步的 Agent loop；简单问候跳过检索 | 本地场景不为框架而框架 |
-| 2. LLM 原语 | 所有生成统一走 `core.llm.complete()`；结构化输入输出、重试、失败降级；助手提示词在 `config/assistant_prompts.yaml` | 默认只调用一次 LLM，控制延迟和显存压力 |
+| 2. LLM 原语 | 所有生成统一走 `core.llm.complete()`；可选 Pydantic 结构化路由、JSON 解析与确定性回退 | `rule` 默认只调用一次 LLM；`llm` 路由会额外增加一次小调用 |
 | 3. 状态机 | `AssistantRequest/Response`、显式 Trace、SQLite Checkpointer、最大步数 | 助手状态机用轻量 Python 编排；内容流水线仍保留可选 LangGraph |
-| 4. Agentic RAG | 按需检索、混合召回、门控、检索失败降级、回答引用来源 | 关闭“本地知识库”后可强制直答 |
+| 4. Agentic RAG | 按需检索、混合召回、门控和回答引用；query enhancer / HyDE / dense / reranker 可独立降级 | dense 失败仍保留 BM25 + RRF，reranker 失败保留融合顺序 |
 | 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
-| 6. MCP 与工具工程化 | `KnowledgeSearchTool` 有 Pydantic 输入/输出、工具 Manifest、JSON Schema、Harness 管控与审计 | 当前是 **MCP-ready 契约**，尚未启动独立 MCP Server |
+| 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway`：Pydantic I/O、Manifest、JSON Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
 | 7. Eval & Observability | 8 条离线助手回归集；路由、引用、步数、回答率；UI 展示逐步 Trace | 该评测不代表真实 LLM 回答质量，后续再扩充人工/LLM-as-Judge 集合 |
-| 8. 生产化 | 上下文裁剪、限流、最大步数、故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
+| 8. 生产化 | 上下文裁剪、会话级限流、最大步数、组件级故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
 
 助手严格只读：它能查询知识库、解释项目和给出建议，但没有真实发布工具；发布仍必须经过现有人工确认与安全锁。
 
@@ -82,6 +83,7 @@
 - **Cross-Encoder 重排**：只对 RRF 召回的少量候选做 query-document 联合打分，降低全库计算成本。
 - **相关性门控**：`min_score` 过滤低相关知识，避免无关范例污染生成结果。
 - **可观测性**：每次召回将查询变体、embedding 后端、kNN 模式、融合与重排信息写入 `draft.metadata.rag_trace`。
+- **组件级降级**：LLM query rewrite 失败回退规则改写；HyDE 失败跳过；dense 失败继续 BM25/RRF；reranker 失败保留 RRF 顺序；降级组件和异常类型写入 trace。
 - **持久化嵌入缓存**：非 hashing 文档向量写入 D 盘 `.rag_cache/embeddings.sqlite3`，按模型和文本哈希复用；用户查询不入库，避免无界增长。
 - **参考/范例分流**：公开百科标记为 `reference`，只用于概念和事实；手工收藏的优质笔记标记为 `example`，才用于学习结构与语气。
 
@@ -132,6 +134,13 @@ RAG_EMBEDDING_CACHE=1
 RAG_QUERY_ENHANCER=rule
 RAG_ENABLE_HYDE=0
 RAG_RERANKER=none
+```
+
+对话路由在 `config/persona.yaml` 中配置：
+
+```yaml
+assistant:
+  router: rule  # rule（默认，低延迟）/ llm（结构化 JSON 路由，失败自动回退）
 ```
 
 ### 公开中文知识包（小体积）
@@ -227,7 +236,7 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 79 项单测
+pytest tests/            # 87 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
 python -m eval.rag_scorer --top-k 1  # RAG Recall@K / MRR
@@ -251,6 +260,7 @@ personax/
 │   ├── orchestrator.py     # 纯 Python 编排器
 │   ├── assistant.py        # 对话 Supervisor-Worker + Checkpointer
 │   ├── assistant_tools.py  # 类型化检索工具 + MCP-ready Manifest
+│   ├── tool_gateway.py     # 只读工具白名单 + Schema + Harness + Audit
 │   ├── graph.py            # LangGraph 图编排（可选）
 │   ├── harness.py          # 规则引擎（限流/审批/审计）
 │   ├── compliance.py       # 合规引擎
@@ -263,7 +273,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（79 项）
+└── tests/                  # pytest（87 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）

@@ -21,8 +21,27 @@
 - SQLite checkpoint 使用参数化查询，恶意 `thread_id` 不会改变表结构；损坏 JSON 安全回退为空历史。
 - AI 助手工具清单仅有只读知识检索，不包含发布工具。
 
+## 阶段 2：Agent 硬化与完整验收
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| Agent 硬化专项 | `python -m pytest tests/test_agent_hardening.py tests/test_assistant.py tests/test_security.py` | 23 passed，0 failed，0.19s |
+| 完整单测 | `python -m pytest tests` | 87 passed，0 failed，1.08s（最终提交前重跑） |
+| 助手离线评测 | `python -m eval.assistant_scorer` | 8/8 通过；路由准确率、引用覆盖率、步数受控率、回答率均为 1.0 |
+| 本地向量检索 | `python -m eval.rag_scorer --top-k 1` | 6 条；Recall@1=1.0，MRR=1.0；`ollama:bge-m3` + exact kNN；156 cache hits / 0 misses |
+| 本机 Ollama 端到端问答 | 单轮知识问题冒烟 | 8.61s；4 个来源，4 步；生成成功，Reviewer 补充缺失引用标记，因此 `degraded=true` |
+| CLI 内容链路 | `LLM_BACKEND=offline python main.py generate --topic ...` | exit 0；生成、封面、合规、就绪门禁、DryRun 全链通过；`publish_ready=True` |
+| Streamlit 脚本冒烟 | `streamlit.testing.v1.AppTest` | 0 个页面异常 |
+| 运行中 UI 存活 | `GET http://127.0.0.1:8501/` | HTTP 200，响应 11141 bytes |
+| Python 语法检查 | `python -m py_compile ...` | 通过 |
+| 最终密钥扫描 | `python scripts/check_secrets.py --strict` | 通过；扫描 204 个文件，0 个可提交危险项 |
+
+本轮增加的故障注入覆盖：LLM 路由非法 JSON、未知工具、工具参数越界、embedding 不可用、reranker 不可用、query enhancer/HyDE 不可用。相应结果均为受控阻断或降级，未进入发布链路。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。
 - 本轮未用受限账号做平台端到端发布测试，这是刻意的安全边界，不代表发布流程已在当前平台状态下验收。
 - 本地 `.env`、登录态和发布日志存在但已被 `.gitignore` 忽略；它们不在本次提交范围。
+- RAG 6 条、助手 8 条均是小样本冒烟集，不可对外宣称为大规模质量基准或线上 SLA。
+- 本机 Ollama 问答暴露了一个可观测信号：当前本地模型可能遗漏行内引用，Reviewer 会补充 `[1]` 并标记降级；后续应用更大人工集验证引用是否准确对应到具体句子。

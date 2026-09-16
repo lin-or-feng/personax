@@ -96,6 +96,14 @@ class AssistantResponse(BaseModel):
     degraded: bool = False
 
 
+class RouteDecision(BaseModel):
+    """Supervisor 的结构化路由结果。"""
+
+    route: Literal["direct", "knowledge"]
+    reason: str = Field(default="", max_length=300)
+    router: Literal["manual", "rule", "llm", "fallback"] = "rule"
+
+
 class ToolManifest(BaseModel):
     """MCP-ready 工具描述；可直接导出 JSON Schema。"""
 
@@ -116,3 +124,19 @@ class KnowledgeSearchInput(BaseModel):
 class KnowledgeSearchOutput(BaseModel):
     sources: list[AssistantSource] = Field(default_factory=list)
     trace: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCallRequest(BaseModel):
+    """MCP-ready 工具调用边界；arguments 保留 JSON 形态再由工具 Schema 校验。"""
+
+    name: str = Field(min_length=1, max_length=120, pattern=r"^[a-z0-9_\-]+$")
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    user_id: str = Field(default="anonymous", max_length=200)
+
+
+class ToolCallResult(BaseModel):
+    """工具网关统一返回，阻断/校验错误不向上层泄漏异常。"""
+
+    status: Literal["ok", "blocked", "error"]
+    output: KnowledgeSearchOutput | None = None
+    error: str = ""
