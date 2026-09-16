@@ -1,5 +1,33 @@
 # 更新日志（Changelog）
 
+## v2.2.0（2026-09-16）—— 持久化工作流、节点观测与可复现质量门禁
+
+### ♻️ LangGraph 持久化与可观测性
+- 内容状态图从仅进程内 `MemorySaver` 升级为官方 `SqliteSaver`，checkpoint 写入 `logs/langgraph_checkpoints.sqlite3`
+- 新增最近运行索引与保留策略，默认保存最近 100 次；重启 Streamlit 后仍可查看运行结果
+- 每个 Router、Skill、风格检查和 Ready 节点记录状态、耗时、说明、重试次数与 checkpoint ID
+- Streamlit 生成页展示当次轨迹，状态页新增完成/拦截/异常指标、最近运行表和单次节点详情
+- checkpoint 状态入库前转为 JSON 兼容数据；严格序列化禁用 pickle 和任意 Python 类型加载
+
+### 🛡️ 最终门禁与安全修复
+- 修复风格检查重试耗尽后仍可能残留 `publish_ready=true` 的逻辑漏洞
+- 最终风格门禁失败现在强制写入 `publish_ready=false` 与具体问题
+- CLI 只有在合规检查和发布就绪门禁同时通过后，才会进入 DryRun 或真实 Publisher
+- LangGraph CLI 默认使用唯一 thread ID，避免不同运行误共享旧 checkpoint；也可用 `--thread-id` 显式指定
+
+### 📏 评测与发布验收
+- RAG 评测新增 Recall@K、MRR、P50/P95/最大延迟、降级状态与阈值判定
+- 新增 `main.py rag-eval`，未达到 Recall/MRR 门槛时返回非零退出码
+- 默认 hashing 后端不读取本机 RAG 环境覆盖，保证 CI/离线回归可复现；可显式选择 Ollama `bge-m3` 实测
+- 新增 `scripts/release_check.py`，串联完整单测、稿件合规、密钥扫描、助手回归和 RAG 门禁
+- 单元测试增至 97 项；新增 SQLite checkpoint 持久化/清理、节点 Trace、失败恢复、最终门禁覆盖和 RAG 阈值测试
+
+### 📌 边界
+- 本版没有进行小红书真实发布；只做本地离线生成、门禁拦截、AppTest 和 DryRun 安全验证
+- SQLite saver 面向本地单机与轻量部署；多进程生产环境仍应换共享 checkpoint 后端
+
+---
+
 ## v2.1.0（2026-09-16）—— LangChain 工具标准化、LangGraph 真实编排与合规加固
 
 ### ✨ Agent 与 LangChain 生态

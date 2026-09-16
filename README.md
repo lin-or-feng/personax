@@ -1,8 +1,8 @@
-# PersonaX 2.1 🍃 内容生成、知识问答与安全发布 Agent
+# PersonaX 2.2 🍃 可恢复、可观测、可评测的内容 Agent
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-92%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-97%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
@@ -14,10 +14,25 @@
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
 - **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
-- **LangChain 生态实际接入**：助手工具走 `StructuredTool`；内容编排可切换 `StateGraph + RunnableLambda + MemorySaver`
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、92 项 pytest 全绿
+- **LangChain 生态实际接入**：助手工具走 `StructuredTool`；内容编排可切换 `StateGraph + RunnableLambda + SqliteSaver`
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、97 项 pytest 全绿
 
-## 🆕 PersonaX 2.1：八个 Agent 模块的项目化落地
+## 🆕 PersonaX 2.2：这次具体优化了什么
+
+2.2 的目标不是继续堆概念，而是解决 2.1 在“重启恢复、故障定位、质量回归、最终门禁”上的真实缺口：
+
+| 优化 | 2.1 的问题 | 2.2 的实现 | 直接收益 |
+|---|---|---|---|
+| 持久化状态图 | `MemorySaver` 随进程退出丢失 | 官方 `SqliteSaver` 写入 `logs/langgraph_checkpoints.sqlite3`，保留最近 100 次运行 | 重启 Streamlit 后仍能查看 checkpoint 与运行轨迹 |
+| 安全 checkpoint | 图状态含 Python 对象，默认反序列化边界偏宽 | 入库前转换为 JSON 兼容数据，`JsonPlusSerializer` 禁用 pickle 并启用严格类型白名单 | 降低本地 checkpoint 被篡改后的反序列化风险 |
+| 节点级可观测性 | 只有总步数，难判断卡在哪一步 | 记录 Router、每个 Skill、风格检查、重试、状态、耗时、说明和 checkpoint ID | 可视化状态页可直接定位失败节点与重试原因 |
+| 最终门禁修复 | 风格检查失败时可能残留前序 `publish_ready=true` | 最终风格门禁失败会覆盖为 `publish_ready=false`；CLI 在合规或就绪失败时停止发布 | 避免“图已拦截但后续仍执行 DryRun/发布”的逻辑漏洞 |
+| RAG 质量门禁 | 评测只打印结果，没有通过阈值与退出码 | 固定 hashing 后端做可复现回归，检查 Recall@1、MRR、P50/P95 延迟和降级状态 | 可接 CI，质量下降会返回非零退出码 |
+| 一键发布前验收 | 测试、合规、密钥、助手和 RAG 需分别执行 | `python scripts/release_check.py` 串联五道门禁，任一步失败立即停止 | 发布版本前只需一条命令，结果可复查 |
+
+LangGraph 运行摘要只保存主题、状态、耗时、节点轨迹与 checkpoint 标识，不把完整提示词、正文或密钥复制到诊断表。真实发布安全锁保持默认关闭。
+
+## PersonaX 2.1 基础：八个 Agent 模块的项目化落地
 
 2.1 没有把所有概念堆成多个重型服务，而是围绕本地 3B/7B 模型做了一条可运行、可解释、可测试的对话链路：
 
@@ -31,11 +46,11 @@
   → SQLite Checkpoint + AuditLog + usage trace
 ```
 
-| 教学模块 | PersonaX 2.1 实现 | 边界说明 |
+| 教学模块 | PersonaX 2.2 实现 | 边界说明 |
 |---|---|---|
 | 1. Agent 认知与选型 | 采用显式、最多 4 步的 Agent loop；简单问候跳过检索 | 本地场景不为框架而框架 |
 | 2. LLM 原语 | 所有生成统一走 `core.llm.complete()`；可选 Pydantic 结构化路由、JSON 解析与确定性回退 | `rule` 默认只调用一次 LLM；`llm` 路由会额外增加一次小调用 |
-| 3. 状态机 | 助手有显式 Trace/Checkpoint；内容链提供真实 `StateGraph + MemorySaver` 引擎 | 默认 Python 引擎保持低开销，CLI/UI 可显式切到 LangGraph |
+| 3. 状态机 | 助手有显式 Trace/Checkpoint；内容链提供真实 `StateGraph + SqliteSaver` 引擎 | 默认 Python 引擎保持低开销，CLI/UI 可显式切到 LangGraph |
 | 4. Agentic RAG | 按需检索、混合召回、门控和回答引用；query enhancer / HyDE / dense / reranker 可独立降级 | dense 失败仍保留 BM25 + RRF，reranker 失败保留融合顺序 |
 | 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
 | 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway` + LangChain `StructuredTool`：Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
@@ -47,7 +62,7 @@
 ### LangChain / LangGraph 到底用在哪里
 
 - `core/tool_gateway.py`：把只读知识检索导出为 LangChain Core `StructuredTool`，输入仍用 Pydantic Schema，执行仍必须通过 Harness。
-- `core/graph.py`：用 LangGraph `StateGraph`、LangChain `RunnableLambda` 和 `MemorySaver` 组成可执行的 Skill 状态图，包含风格校验和有界重试。
+- `core/graph.py`：用 LangGraph `StateGraph`、LangChain `RunnableLambda` 和 `SqliteSaver` 组成可执行的 Skill 状态图，包含风格校验、有界重试、严格序列化与运行留痕。
 - CLI 使用 `python main.py generate --topic "..." --engine langgraph`；可视化生成页可选「LangGraph（状态图）」。
 - 项目没有为了“用框架”强行改写 BM25/RRF 等已有可测试算法；LangChain 负责工具标准化和可组合执行，检索算法仍由 PersonaX 控制。
 
@@ -169,13 +184,15 @@ assistant:
 .\.venv\Scripts\python.exe -m pip install -e ".[rag]"
 ```
 
-检索回归评测：
+检索回归评测与门禁：
 
 ```powershell
-.\.venv\Scripts\python.exe -m eval.rag_scorer --top-k 1
+.\.venv\Scripts\python.exe main.py rag-eval --top-k 1 --backend hashing
+# 本机 bge-m3 实测（需 Ollama 正在运行）
+.\.venv\Scripts\python.exe main.py rag-eval --top-k 1 --backend ollama
 ```
 
-评测会输出 `Recall@K`、`MRR` 和 `rag_trace`。仓库自带 6 条样例只用于冒烟回归；对外描述性能前，应扩充到至少 50～100 条人工标注查询，并做 BM25、dense kNN、RRF、RRF + reranker 消融对比。
+评测会输出 `Recall@K`、`MRR`、P50/P95 延迟、降级组件和 `rag_trace`。默认门槛为 Recall@1/MRR 均不低于 0.80，未达标时进程返回非零退出码。仓库自带 6 条样例只用于冒烟回归；对外描述性能前，应扩充到至少 50～100 条人工标注查询，并做 BM25、dense kNN、RRF、RRF + reranker 消融对比。
 
 ## 🚀 快速开始
 
@@ -245,11 +262,12 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 92 项单测
+pytest tests/            # 97 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
-python -m eval.rag_scorer --top-k 1  # RAG Recall@K / MRR
+python main.py rag-eval --top-k 1  # RAG Recall@K / MRR / 延迟门禁
 python scripts/check_content_compliance.py  # 批量检查 content_bank 稿件
+python scripts/release_check.py  # 单测 + 合规 + 密钥 + 助手 + RAG 一键门禁
 python main.py notes --browser msedge   # 核实真实发布的笔记
 ```
 
@@ -257,7 +275,7 @@ python main.py notes --browser msedge   # 核实真实发布的笔记
 
 ```
 personax/
-├── main.py                 # CLI 入口（generate/publish/schedule/login/notes/probe/personas/eval）
+├── main.py                 # CLI 入口（generate/publish/schedule/login/notes/probe/personas/eval/rag-eval）
 ├── app.py                  # Streamlit 可视化工作台
 ├── setup.ps1               # Windows 一键安装
 ├── config/
@@ -271,7 +289,7 @@ personax/
 │   ├── assistant.py        # 对话 Supervisor-Worker + Checkpointer
 │   ├── assistant_tools.py  # 类型化检索工具 + MCP-ready Manifest
 │   ├── tool_gateway.py     # 只读工具白名单 + Schema + Harness + Audit
-│   ├── graph.py            # LangGraph StateGraph + LangChain Runnable 执行器
+│   ├── graph.py            # LangGraph + SQLite checkpoint + 节点 Trace
 │   ├── harness.py          # 规则引擎（限流/审批/审计）
 │   ├── compliance.py       # 合规引擎
 │   ├── rag.py              # RAG（BM25 + dense kNN + RRF + 可选重排）
@@ -283,7 +301,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（92 项）
+└── tests/                  # pytest（97 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -325,6 +343,8 @@ python main.py probe --mode tuwen --upload assets/note_cover.png --browser msedg
 & .\.venv\Scripts\python.exe scripts\check_content_compliance.py
 & .\.venv\Scripts\python.exe -m pytest tests\test_security.py
 & .\.venv\Scripts\python.exe -m pytest tests
+# 或一键执行全部发布门禁：
+& .\.venv\Scripts\python.exe scripts\release_check.py
 ```
 
 本次完整的命令、环境、通过数和剩余边界记录在 [`docs/TEST_RESULTS.md`](docs/TEST_RESULTS.md)。
@@ -365,7 +385,8 @@ python scripts/install_hooks.py
 
 - 话题「话题芯片」暂未自动添加（网页编辑器话题面板交互复杂，标签以 `#文本` 留正文，可在 App 补加）
 - VectorStore 为内存实现（接口已抽象，可换 Milvus/Qdrant）
-- LangGraph 编排已可运行且可在 CLI/UI 切换，但当前仅使用进程内 `MemorySaver`，不是跨进程持久化状态
+- SQLite checkpoint 适合本地单机与轻量部署，不适合多进程高并发；生产集群应换 PostgresSaver 等共享后端
+- RAG/助手评测集仍只有 6/8 条，属于工程冒烟门禁，不代表线上质量 SLA
 - 单账号设计（多账号/并发为后续方向）
 
 ## 🧰 技术栈

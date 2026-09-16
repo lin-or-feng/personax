@@ -56,6 +56,26 @@
 
 2.1 中“使用 LangChain”的边界：助手检索工具使用 LangChain Core `StructuredTool`；内容状态图使用 LangChain `RunnableLambda` 与 LangGraph `StateGraph/MemorySaver`。BM25、RRF、dense kNN 仍是项目内可测试实现，没有换成不透明的黑盒封装。
 
+## 阶段 4：PersonaX 2.2 持久化工作流与质量门禁验收
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 一键发布门禁 | `python scripts/release_check.py` | 五道门禁全部通过，12.62s |
+| 完整单测 | `python -m pytest` | 97 passed，0 failed，2.59s（最终发布门禁复跑） |
+| LangGraph SQLite 持久化 | `tests/test_langgraph_runtime.py` | 官方 `SqliteSaver` 成功保存并跨实例读取；checkpoint ID/数量与运行摘要完整 |
+| Checkpoint 严格序列化 | 同上 + `core/graph.py` | 状态先转 JSON 兼容字典；禁用 pickle 与任意模块反序列化 |
+| 最终风格门禁 | `test_final_style_gate_overrides_earlier_publish_ready` | 重试耗尽后覆盖 `publish_ready=false`，阻止残留就绪标记 |
+| LangGraph CLI 故障冒烟 | `LLM_BACKEND=offline python main.py generate ... --engine langgraph --thread-id v22-smoke-gate --no-cover` | 风格句长超标后状态为 blocked；列出具体问题并停在 Publisher 前，未执行 DryRun |
+| 可复现 RAG 门禁 | `python main.py rag-eval --backend hashing --top-k 1` | 6 条；Recall@1=0.8333，MRR=0.8333，P95=127.7ms，无降级，门槛 0.80 通过 |
+| 本机语义向量实测 | `python main.py rag-eval --backend ollama --top-k 1` | `ollama:bge-m3`；Recall@1=1.0，MRR=1.0，P95=306.4ms；156 cache hits / 0 misses，无降级 |
+| AI 助手离线回归 | `python -m eval.assistant_scorer` | 8/8 通过；路由、引用、步数、回答率均为 1.0 |
+| 批量稿件合规 | `python scripts/check_content_compliance.py` | `content_bank` 3/3 通过，0 条违规 |
+| Streamlit 页面冒烟 | `streamlit.testing.v1.AppTest` | 默认页与新增状态页均为 0 个页面异常 |
+| Python 语法 | `python -m compileall -q app.py main.py core eval scripts` | 通过 |
+| 密钥/敏感文件 | `python scripts/check_secrets.py --strict` | 通过；扫描 218 个文件，0 个可提交危险项 |
+
+2.2 的可观测边界：运行索引保存主题、状态、节点、耗时、重试和 checkpoint 标识，不复制完整提示词、正文或密钥；真实 LangGraph state 由本地 SQLite checkpointer 管理并只保留最近 100 个 thread。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。

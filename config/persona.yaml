@@ -46,6 +46,11 @@ assistant:
   router: rule                 # rule / llm（无效 JSON 自动回退 rule）
   tool_runtime: langchain      # langchain(StructuredTool) / native；两者都必须经过 Harness
 
+# LangGraph 运行状态：SQLite 持久化到项目 D 盘，自动清理过旧运行
+langgraph:
+  checkpoint_path: logs/langgraph_checkpoints.sqlite3
+  retention_runs: 100
+
 # Harness 规则
 harness:
   max_retries: 2

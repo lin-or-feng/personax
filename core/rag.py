@@ -563,17 +563,19 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
                        query_enhancer: str | None = None,
                        enable_hyde: bool | None = None,
                        reranker: str | None = None,
-                       reranker_model: str | None = None) -> RAGPipeline:
+                       reranker_model: str | None = None,
+                       environment_overrides: bool = True) -> RAGPipeline:
     """从 Markdown 目录构建并按文件指纹缓存混合索引。"""
     path = Path(dir_path)
-    backend = (os.getenv("RAG_EMBEDDING_BACKEND") or embedding_backend or "hashing").lower()
+    env = os.getenv if environment_overrides else lambda _key: None
+    backend = (env("RAG_EMBEDDING_BACKEND") or embedding_backend or "hashing").lower()
     default_model = "bge-m3" if backend == "ollama" else "BAAI/bge-small-zh-v1.5"
-    model = os.getenv("RAG_EMBEDDING_MODEL") or embedding_model or default_model
-    enhancer_name = (os.getenv("RAG_QUERY_ENHANCER") or query_enhancer or "rule").lower()
-    hyde_env = os.getenv("RAG_ENABLE_HYDE")
+    model = env("RAG_EMBEDDING_MODEL") or embedding_model or default_model
+    enhancer_name = (env("RAG_QUERY_ENHANCER") or query_enhancer or "rule").lower()
+    hyde_env = env("RAG_ENABLE_HYDE")
     hyde = (hyde_env == "1") if hyde_env is not None else bool(enable_hyde)
-    reranker_name = (os.getenv("RAG_RERANKER") or reranker or "none").lower()
-    rerank_model = os.getenv("RAG_RERANKER_MODEL") or reranker_model or "BAAI/bge-reranker-base"
+    reranker_name = (env("RAG_RERANKER") or reranker or "none").lower()
+    rerank_model = env("RAG_RERANKER_MODEL") or reranker_model or "BAAI/bge-reranker-base"
     files = sorted(path.rglob("*.md")) if path.exists() else []
     signature = tuple((str(f.resolve()), f.stat().st_mtime_ns, f.stat().st_size) for f in files)
     cache_key = (signature, chunk_size, backend, model,

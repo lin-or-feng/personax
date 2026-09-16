@@ -1,4 +1,4 @@
-"""PersonaX 2.1 对话 AI 助手编排。
+"""PersonaX 2.2 对话 AI 助手编排。
 
 实现一个受限的 Supervisor-Worker 流程：
 route -> (knowledge_search) -> answer -> review -> checkpoint。

@@ -1,4 +1,4 @@
-"""PersonaX 可视化工作台（Streamlit）
+"""PersonaX 2.2 可视化工作台（Streamlit）
 
 启动：
     pip install streamlit
@@ -34,6 +34,7 @@ BANK_DIR = BASE / "content_bank"
 LOG_PATH = BASE / "publish_log.json"
 STATE_PATH = BASE / "storage_state.json"
 ASSISTANT_CHECKPOINT_PATH = BASE / "logs" / "assistant_checkpoints.sqlite3"
+LANGGRAPH_CHECKPOINT_PATH = BASE / "logs" / "langgraph_checkpoints.sqlite3"
 
 st.set_page_config(page_title="PersonaX 小红书工作台", page_icon="🍃", layout="wide")
 
@@ -184,6 +185,38 @@ def _render_assistant_meta(message: dict) -> None:
                 ["step", "worker", "action", "status", "ms", "detail"], rows))
 
 
+def _render_generation_trace(draft) -> None:
+    """只在 LangGraph 模式展示可解释轨迹；不暴露提示词或正文 checkpoint。"""
+
+    metadata = draft.metadata or {}
+    if metadata.get("orchestration_engine") != "langgraph":
+        return
+    trace = metadata.get("graph_trace") or []
+    status = str(metadata.get("graph_status") or "unknown")
+    status_label = {"completed": "已完成", "blocked": "被门禁拦截", "error": "执行失败"}.get(
+        status, status)
+    with st.expander(
+        f"LangGraph 执行轨迹 · {status_label} · {len(trace)} 个节点",
+        icon=":material/account_tree:",
+    ):
+        with st.container(horizontal=True):
+            st.metric("Skill 执行", int(metadata.get("graph_steps") or 0), border=True)
+            st.metric("Checkpoint", int(metadata.get("graph_checkpoint_count") or 0), border=True)
+            st.metric("总耗时", f"{float(metadata.get('graph_duration_ms') or 0):.0f} ms", border=True)
+        st.caption(
+            f"运行 ID：`{metadata.get('graph_thread_id', '-')}` · "
+            f"存储：{metadata.get('graph_checkpoint_backend', '-')} · "
+            "仅保存本地诊断状态，不代表已发布"
+        )
+        if trace:
+            st.dataframe(
+                trace,
+                hide_index=True,
+                width="stretch",
+                key=f"generation_trace_{metadata.get('graph_thread_id', 'current')}",
+            )
+
+
 # ---------- 会话状态 ----------
 
 def init_state():
@@ -252,7 +285,7 @@ if page == "📝 生成与编辑":
         ["Python（默认）", "LangGraph（状态图）"],
         default="Python（默认）",
         key="generation_engine",
-        help="LangGraph 模式使用 LangChain Runnable + 内存 checkpoint；两种引擎共用 Skill 和 Harness。",
+        help="LangGraph 模式使用 LangChain Runnable + SQLite checkpoint；重启后仍可在状态页查看运行记录。",
     )
     generation_engine = "langgraph" if engine_label.startswith("LangGraph") else "python"
     from core.websearch import _enabled as ws_enabled
@@ -291,7 +324,7 @@ if page == "📝 生成与编辑":
 
     gen_persona = bp1.selectbox("人格（可手动切换）", persona_names, key=sel_key,
                                 help="选哪个就用哪个语气生成；可到「⚙️ 设置 → 人设库」创建/编辑人格")
-    bp2.button("↩️ 回到推荐", use_container_width=True, on_click=_apply_recommended,
+    bp2.button("↩️ 回到推荐", width="stretch", on_click=_apply_recommended,
                disabled=not rec_persona or rec_persona == gen_persona)
     if rec_persona and gen_persona == rec_persona:
         st.caption(f"💡 已自动选择推荐人格：**{rec_persona}**（想换就手动选，或点「↩️ 回到推荐」）")
@@ -326,6 +359,7 @@ if page == "📝 生成与编辑":
     if draft is None:
         st.info("👆 先点「✨ 生成发布内容」，或到「🗓️ 内容库与定时」选稿编辑。")
     else:
+        _render_generation_trace(draft)
         st.subheader("✏️ 编辑内容")
         ts = st.session_state.gen_ts
         col_a, col_b = st.columns([2, 1])
@@ -599,8 +633,8 @@ elif page == "💬 AI 助手":
 
     suggested_prompt = None
     q1, q2, q3 = st.columns(3)
-    if q1.button("解释 PersonaX 2.1 架构", width="stretch"):
-        suggested_prompt = "请解释 PersonaX 2.1 的 AI 助手架构和一次对话的执行流程。"
+    if q1.button("解释 PersonaX 2.2 架构", width="stretch"):
+        suggested_prompt = "请解释 PersonaX 2.2 的持久化工作流、AI 助手架构和一次对话的执行流程。"
     if q2.button("分析 RAG 检索链路", width="stretch"):
         suggested_prompt = "项目里的 BM25、dense kNN、RRF 和相关性门控分别解决什么问题？"
     if q3.button("给项目优化建议", width="stretch"):
@@ -969,6 +1003,54 @@ elif page == "⚙️ 设置":
 else:
     st.header("📊 状态与日志")
 
+    st.subheader("LangGraph 运行观测")
+    from core.graph import GraphRunStore
+
+    graph_runs = GraphRunStore(LANGGRAPH_CHECKPOINT_PATH).list_recent(limit=50)
+    completed_runs = sum(item.status == "completed" for item in graph_runs)
+    blocked_runs = sum(item.status == "blocked" for item in graph_runs)
+    error_runs = sum(item.status == "error" for item in graph_runs)
+    with st.container(horizontal=True):
+        st.metric("最近运行", len(graph_runs), border=True)
+        st.metric("完成", completed_runs, border=True)
+        st.metric("门禁拦截", blocked_runs, border=True)
+        st.metric("异常", error_runs, border=True)
+    if not graph_runs:
+        st.info("还没有 LangGraph 运行记录。到“生成与编辑”选择 LangGraph 后生成一次即可。")
+    else:
+        run_rows = [
+            {
+                "运行 ID": item.thread_id,
+                "主题": item.topic,
+                "状态": item.status,
+                "Skill 步数": item.steps,
+                "重试": item.retries,
+                "耗时(ms)": item.duration_ms,
+                "Checkpoint": item.checkpoint_count,
+                "时间": datetime.fromtimestamp(item.updated_at).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            for item in graph_runs
+        ]
+        st.dataframe(run_rows, hide_index=True, width="stretch", key="graph_run_history")
+        selected_run_id = st.selectbox(
+            "查看单次节点轨迹",
+            [item.thread_id for item in graph_runs],
+            key="selected_graph_run",
+        )
+        selected_run = next(item for item in graph_runs if item.thread_id == selected_run_id)
+        st.caption(
+            f"Checkpoint ID：`{selected_run.checkpoint_id or '-'}` · "
+            "运行索引不会保存完整提示词、正文或密钥"
+        )
+        if selected_run.error:
+            st.error(selected_run.error, icon=":material/error:")
+        st.dataframe(
+            [item.model_dump(mode="json") for item in selected_run.trace],
+            hide_index=True,
+            width="stretch",
+            key=f"graph_trace_{selected_run.thread_id}",
+        )
+
     st.subheader("📜 发布留痕（publish_log.json）")
     log = PublishLog(path=str(LOG_PATH)).load()
     if not log.records:
@@ -995,7 +1077,7 @@ else:
         st.markdown(_md_table(["id", "topic", "scheduled_at", "status", "url"], rows))
 
     st.subheader("🧪 评测")
-    eval_col1, eval_col2 = st.columns(2)
+    eval_col1, eval_col2, eval_col3 = st.columns(3)
     if eval_col1.button("▶️ 内容生成评测", width="stretch"):
         with st.spinner("评测中…"):
             proc = subprocess.run([sys.executable, "eval/scorer.py"], cwd=str(BASE),
@@ -1011,4 +1093,17 @@ else:
                 capture_output=True, text=True, encoding="utf-8")
         st.code(proc.stdout[-4_000:] if proc.stdout else proc.stderr[-1_200:])
 
-    st.caption("AI 助手回归不调用真实 LLM，只验证工程闭环；回答质量仍需另做人工或 LLM-as-Judge 评估。")
+    if eval_col3.button("▶️ RAG 质量门禁", width="stretch"):
+        with st.spinner("计算 Recall@1、MRR、延迟与降级状态…"):
+            proc = subprocess.run(
+                [sys.executable, "-m", "eval.rag_scorer", "--top-k", "1", "--backend", "hashing"],
+                cwd=str(BASE), capture_output=True, text=True, encoding="utf-8",
+            )
+        output = proc.stdout[-6_000:] if proc.stdout else proc.stderr[-1_500:]
+        if proc.returncode == 0:
+            st.success("RAG 质量门禁通过", icon=":material/check_circle:")
+        else:
+            st.error("RAG 质量门禁未通过", icon=":material/error:")
+        st.code(output)
+
+    st.caption("离线回归不调用真实 LLM；RAG 门禁固定 hashing 后端以保证可复现，bge-m3 实测可用命令行单独运行。")

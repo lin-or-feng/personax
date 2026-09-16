@@ -7,6 +7,7 @@
   schedule  定时自动发布（--run-once 或 --daemon 无人值守）
   login     浏览器登录一次，导出登录态 storage_state.json
   eval      跑评测集，输出 eval_results.csv
+  rag-eval  跑可复现的 RAG Recall/MRR 质量门禁
 
 示例：
   python main.py generate --topic "秋招穿搭"
@@ -21,6 +22,7 @@ import argparse
 import json
 import sys
 import os
+import uuid
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -104,7 +106,7 @@ def cmd_generate(args):
             topic=args.topic,
             user_id=args.user,
             skill_chain=chain,
-            thread_id=f"cli-{args.user}",
+            thread_id=args.thread_id or f"cli-{args.user}-{uuid.uuid4().hex[:12]}",
         )
     else:
         draft = orch.run(topic=args.topic, user_id=args.user, skill_chain=chain)
@@ -127,6 +129,10 @@ def cmd_generate(args):
         print(f"  - {h}")
     print(f"[就绪门禁] publish_ready={draft.metadata.get('publish_ready')} "
           f"issues={draft.metadata.get('publish_issues', [])}")
+
+    if not comp.ok or draft.metadata.get("publish_ready") is not True:
+        print("\n发布已拦截：合规检查与发布就绪门禁必须同时通过。")
+        return
 
     # 发布（默认干跑；--publish/--real 才真发）
     if args.real and not real_publish_enabled():
@@ -308,6 +314,22 @@ def cmd_eval(args):
     eval_main()
 
 
+def cmd_rag_eval(args):
+    """运行 RAG 质量门禁；返回码可直接用于 CI。"""
+    from eval.rag_scorer import evaluate
+
+    report = evaluate(
+        args.eval_set,
+        args.knowledge,
+        args.top_k,
+        embedding_backend=args.backend,
+        min_recall=args.min_recall,
+        min_mrr=args.min_mrr,
+    )
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    raise SystemExit(0 if report["passed"] else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="personax",
@@ -328,7 +350,9 @@ def main():
     p_gen.add_argument("--skill-chain", nargs="*", default=None,
                        help="指定 Skill 链，如: title_generator body_writer tag_selector cover_writer xhs_publish")
     p_gen.add_argument("--engine", choices=["python", "langgraph"], default="python",
-                       help="编排引擎：python(默认稳定) / langgraph(状态图 + checkpoint)")
+                       help="编排引擎：python(默认稳定) / langgraph(状态图 + SQLite checkpoint)")
+    p_gen.add_argument("--thread-id", default=None,
+                       help="LangGraph 运行 ID；默认每次生成唯一 ID，便于追踪与隔离")
     p_gen.add_argument("--real", action="store_true", help="真实发布（默认干跑）")
     p_gen.add_argument("--publish", dest="real", action="store_true",
                        help="[旧用法别名] 等价于 --real")
@@ -411,6 +435,19 @@ def main():
     # eval
     p_eval = sub.add_parser("eval", help="跑评测集输出 CSV")
     p_eval.set_defaults(func=cmd_eval)
+
+    # rag-eval（可复现检索门禁）
+    p_rag_eval = sub.add_parser("rag-eval", help="跑 RAG Recall/MRR/延迟质量门禁")
+    p_rag_eval.add_argument("--eval-set", default="eval/rag_eval_set.json")
+    p_rag_eval.add_argument("--knowledge", default="knowledge")
+    p_rag_eval.add_argument("--top-k", type=int, default=1)
+    p_rag_eval.add_argument(
+        "--backend", choices=["hashing", "ollama", "sentence-transformers"],
+        default="hashing",
+    )
+    p_rag_eval.add_argument("--min-recall", type=float, default=0.80)
+    p_rag_eval.add_argument("--min-mrr", type=float, default=0.80)
+    p_rag_eval.set_defaults(func=cmd_rag_eval)
 
     argv = sys.argv[1:]
 
