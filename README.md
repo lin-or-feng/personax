@@ -1,34 +1,164 @@
-# PersonaX 🍃 小红书内容生成与自动发布 Agent
+# PersonaX 2.0 🍃 内容生成、知识问答与安全发布 Agent
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-38%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![Playwright](https://img.shields.io/badge/UI%20Automation-Playwright-orange) ![Tests](https://img.shields.io/badge/Tests-73%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
 - **LLM 内容生成**：接入 DeepSeek，提示词资产化（`config/prompts.yaml` 热更新，改文案不动代码）
+- **有状态 AI 助手**：Streamlit 原生对话界面，按需检索、可追溯引用、Agent Trace、SQLite Checkpoint
 - **多人格系统**：`config/personas.yaml` 人格库，生成时 `--persona <名字>` 选谁用谁写（内置 4 个人格）
-- **RAG 知识库增强**：`knowledge/*.md` 喂优质范例 → 中文 bigram 主题加权检索 + 相关性门槛（不跑题）
+- **RAG 混合检索**：BM25 + dense embedding 精确 kNN 双路召回，RRF 融合；支持 query rewriting / HyDE、cross-encoder 重排与相关性门控
 - **商用合规引擎**：广告法/医疗金融承诺/导流词表，发布前自动拦截违规内容
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
-- **可视化工作台**：Streamlit 5 页（生成编辑 / 内容库定时 / 知识库 / 设置 / 状态日志）
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、38 项 pytest 全绿
+- **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、73 项 pytest 全绿
+
+## 🆕 PersonaX 2.0：八个 Agent 模块的项目化落地
+
+2.0 没有把所有概念堆成多个重型服务，而是围绕本地 3B/7B 模型做了一条可运行、可解释、可测试的对话链路：
+
+```text
+用户问题
+  → Supervisor 路由（直接回答 / 知识检索）
+  → Retriever Worker（BM25 + dense kNN + RRF + min_score）
+  → Answerer Worker（一次 LLM 调用，结合最近 8 条消息）
+  → Reviewer Worker（非空与引用检查）
+  → SQLite Checkpoint + AuditLog + usage trace
+```
+
+| 教学模块 | PersonaX 2.0 实现 | 边界说明 |
+|---|---|---|
+| 1. Agent 认知与选型 | 采用显式、最多 4 步的 Agent loop；简单问候跳过检索 | 本地场景不为框架而框架 |
+| 2. LLM 原语 | 所有生成统一走 `core.llm.complete()`；结构化输入输出、重试、失败降级；助手提示词在 `config/assistant_prompts.yaml` | 默认只调用一次 LLM，控制延迟和显存压力 |
+| 3. 状态机 | `AssistantRequest/Response`、显式 Trace、SQLite Checkpointer、最大步数 | 助手状态机用轻量 Python 编排；内容流水线仍保留可选 LangGraph |
+| 4. Agentic RAG | 按需检索、混合召回、门控、检索失败降级、回答引用来源 | 关闭“本地知识库”后可强制直答 |
+| 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
+| 6. MCP 与工具工程化 | `KnowledgeSearchTool` 有 Pydantic 输入/输出、工具 Manifest、JSON Schema、Harness 管控与审计 | 当前是 **MCP-ready 契约**，尚未启动独立 MCP Server |
+| 7. Eval & Observability | 8 条离线助手回归集；路由、引用、步数、回答率；UI 展示逐步 Trace | 该评测不代表真实 LLM 回答质量，后续再扩充人工/LLM-as-Judge 集合 |
+| 8. 生产化 | 上下文裁剪、限流、最大步数、故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
+
+助手严格只读：它能查询知识库、解释项目和给出建议，但没有真实发布工具；发布仍必须经过现有人工确认与安全锁。
 
 ## 🏗️ 架构
 
 ```
 接入层     main.py (CLI) + app.py (Streamlit 可视化)
    ↓
-编排层     orchestrator.py（Skill 链 + Harness 拦截 + 风格闭环）+ graph.py（LangGraph，可选）
+编排层     orchestrator.py（内容 Skill 链）+ assistant.py（对话 Supervisor-Worker）
+           + graph.py（LangGraph，可选）
    ↓
 能力层     skills/（标题/正文/标签/封面/就绪门禁）+ rag.py + llm.py（DeepSeek）
    ↓
-基础设施   types.py(契约) registry.py(路由) harness.py(规则引擎) style.py
+基础设施   types.py(契约) registry.py(路由) harness.py(规则引擎) assistant_tools.py
+           style.py
            compliance.py(合规) persona.py(多人格) prompts.py(提示词资产)
    ↓
 执行层     publishers/（xhs.py Playwright 真发 / scheduler.py 定时调度）
 ```
+
+## 🔎 RAG 混合检索改进
+
+当前检索链路：
+
+```text
+用户主题
+  → Query Rewriting（默认规则，可选 LLM）/ 可选 HyDE
+  → BM25 关键词召回 + dense embedding 精确 kNN 召回
+  → RRF 融合不同分数量纲的排名
+  → 可选 Cross-Encoder 对候选文档重排
+  → min_score 相关性门控
+  → 相关知识注入内容生成提示词
+```
+
+主要改进：
+
+- **BM25 稀疏检索**：保留专有名词、岗位名、学校名等精确关键词信号；零分文档不会进入 RRF。
+- **dense kNN 语义检索**：用同一 embedding 模型编码查询和知识片段，遍历全部向量计算余弦相似度并取 Top-K。
+- **RRF 排名融合**：只使用每路结果的名次进行融合，避免直接混合 BM25 分数与 cosine 分数。
+- **查询增强**：短主题默认使用低延迟规则改写；复杂问题可通过现有 LLM 后端生成多查询或 HyDE 假设答案。
+- **Cross-Encoder 重排**：只对 RRF 召回的少量候选做 query-document 联合打分，降低全库计算成本。
+- **相关性门控**：`min_score` 过滤低相关知识，避免无关范例污染生成结果。
+- **可观测性**：每次召回将查询变体、embedding 后端、kNN 模式、融合与重排信息写入 `draft.metadata.rag_trace`。
+- **持久化嵌入缓存**：非 hashing 文档向量写入 D 盘 `.rag_cache/embeddings.sqlite3`，按模型和文本哈希复用；用户查询不入库，避免无界增长。
+- **参考/范例分流**：公开百科标记为 `reference`，只用于概念和事实；手工收藏的优质笔记标记为 `example`，才用于学习结构与语气。
+
+为什么现阶段使用精确 kNN，而不是 ANN：当前知识库规模较小，精确 kNN 实现直观、结果可复现且不会损失召回率。等知识库增长到数万以上 chunk，并通过性能测试确认向量遍历成为瓶颈后，再替换为 FAISS/HNSW 等 ANN 索引。
+
+### Ollama 模型分工
+
+内容生成模型和 embedding 模型用途不同，需要分别安装：
+
+```powershell
+# 内容生成、LLM Query Rewriting / HyDE
+ollama pull qwen2.5:7b
+
+# dense 语义检索
+ollama pull bge-m3
+```
+
+### Windows 将 Ollama 模型放到 D 盘
+
+模型默认位于 `%USERPROFILE%\.ollama\models`。C 盘空间紧张时，推荐先退出托盘中的 Ollama，再设置用户环境变量并重新启动：
+
+```powershell
+New-Item -ItemType Directory -Force D:\OllamaModels
+setx OLLAMA_MODELS "D:\OllamaModels"
+```
+
+如果系统策略不允许写环境变量，也可在确认默认模型目录不存在后建立目录联接：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ollama"
+New-Item -ItemType Junction `
+  -Path "$env:USERPROFILE\.ollama\models" `
+  -Target "D:\OllamaModels"
+```
+
+当前开发环境采用第二种方式：`%USERPROFILE%\.ollama\models` 只是指向 `D:\OllamaModels` 的联接，不在 C 盘重复保存模型。`bge-m3` 下载约 1.2GB，本机加载实测约占 664MB GPU 显存；实际占用会随 Ollama 版本、量化和运行设备变化。
+
+`.env` 示例：
+
+```env
+LLM_BACKEND=ollama
+LLM_MODEL=qwen2.5:7b
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+
+RAG_EMBEDDING_BACKEND=ollama
+RAG_EMBEDDING_MODEL=bge-m3
+RAG_EMBEDDING_CACHE=1
+RAG_QUERY_ENHANCER=rule
+RAG_ENABLE_HYDE=0
+RAG_RERANKER=none
+```
+
+### 公开中文知识包（小体积）
+
+项目提供定向导入器，从 Wikimedia 官方 API 获取武汉、校园、求职、Agent/RAG 和内容营销主题。每篇 Markdown 都保留原始链接、获取日期和许可信息，不会下载数 GB 的全量 dump。
+
+```powershell
+& .\.venv\Scripts\python.exe scripts\import_public_knowledge.py --embed
+```
+
+首次 `--embed` 会调用本地 `bge-m3`；之后只为新增或变更的 chunk 重算向量。删除 `.rag_cache/embeddings.sqlite3` 可完全重建缓存。
+
+联网搜索与本地知识库互不改写：本地 RAG 提供稳定可复现的背景，联网搜索仅在生成当次补充时效信息。搜索摘要不会自动写入向量库。
+
+默认 `hashing` embedding 仅用于无模型环境下的离线测试，不能称为真实语义向量模型。启用 Cross-Encoder 时需安装可选依赖：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[rag]"
+```
+
+检索回归评测：
+
+```powershell
+.\.venv\Scripts\python.exe -m eval.rag_scorer --top-k 1
+```
+
+评测会输出 `Recall@K`、`MRR` 和 `rag_trace`。仓库自带 6 条样例只用于冒烟回归；对外描述性能前，应扩充到至少 50～100 条人工标注查询，并做 BM25、dense kNN、RRF、RRF + reranker 消融对比。
 
 ## 🚀 快速开始
 
@@ -90,11 +220,17 @@ pip install streamlit
 python -m streamlit run app.py    # 打开 http://localhost:8501
 ```
 
+Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，或使用桌面上的“PersonaX 可视化”快捷方式。入口会自动检查 Ollama、在独立后台进程中启动 Streamlit 并打开浏览器；命令窗口自动关闭不会停止页面，重复点击会复用已经运行的 8501 服务。启动失败时查看 `.tmp/start-ui.log` 和 `.tmp/streamlit-8501.stderr.log`。
+
+进入左侧 **💬 AI 助手** 即可对话。默认使用本地 Ollama；可在页面上切换模型、开关本地知识库，并展开每条回答下方的“引用来源”和“Agent Trace”。助手不会调用发布功能。
+
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 38 项单测
+pytest tests/            # 73 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
+python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
+python -m eval.rag_scorer --top-k 1  # RAG Recall@K / MRR
 python main.py notes --browser msedge   # 核实真实发布的笔记
 ```
 
@@ -109,13 +245,16 @@ personax/
 │   ├── persona.yaml        # 默认人格 + 系统规则（harness/rag/generation）
 │   ├── personas.yaml       # 人格库（多人格）
 │   ├── prompts.yaml        # 提示词资产（标题/正文/标签/封面模板）
+│   ├── assistant_prompts.yaml # AI 助手提示词资产
 │   └── compliance.yaml     # 合规词表（广告法/医疗金融/导流）
 ├── core/                   # 编排层 + 基础设施
 │   ├── orchestrator.py     # 纯 Python 编排器
+│   ├── assistant.py        # 对话 Supervisor-Worker + Checkpointer
+│   ├── assistant_tools.py  # 类型化检索工具 + MCP-ready Manifest
 │   ├── graph.py            # LangGraph 图编排（可选）
 │   ├── harness.py          # 规则引擎（限流/审批/审计）
 │   ├── compliance.py       # 合规引擎
-│   ├── rag.py              # RAG（中文 bigram + 主题加权 + 相关性门槛）
+│   ├── rag.py              # RAG（BM25 + dense kNN + RRF + 可选重排）
 │   ├── persona.py          # 多人格库
 │   ├── prompts.py          # 提示词资产加载
 │   └── llm.py              # DeepSeek 客户端（重试/超时/惰性依赖）
@@ -124,7 +263,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（38 项）
+└── tests/                  # pytest（73 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -133,7 +272,7 @@ personax/
 |---|---|---|
 | ① 真实 LLM | `.env` 配 Key | 最大提升：模板文 → DeepSeek 现写 |
 | ② 提示词资产 | `config/prompts.yaml` | 改生成要求，热更新不用改代码 |
-| ③ 知识库 RAG | `knowledge/*.md` | 喂同主题优质范例，生成时自动召回学习结构与语气 |
+| ③ 知识库 RAG | `knowledge/*.md` | 混合召回同主题资料；默认离线 hashing，Ollama `bge-m3` 才是真实语义向量 |
 | ④ 多人格 | `config/personas.yaml` | 不同语气人设，`--persona` 切换 |
 | ⑤ 发布稳定性 | `publishers/xhs.py` | 平台改版用 `python main.py probe --mode tuwen` 诊断 |
 

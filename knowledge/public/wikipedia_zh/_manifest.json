@@ -1,0 +1,201 @@
+{
+  "dataset": "PersonaX curated Wikipedia Chinese starter pack",
+  "retrieved_at": "2026-09-11",
+  "license": "CC BY-SA 4.0 / GFDL; see source page for details",
+  "source_api": "https://zh.wikipedia.org/w/api.php",
+  "imported": [
+    {
+      "requested_title": "人工智能",
+      "title": "人工智能",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\人工智能.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E4%BA%BA%E5%B7%A5%E6%99%BA%E8%83%BD",
+      "chars": 4634
+    },
+    {
+      "requested_title": "住房公积金",
+      "title": "住房公积金",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\住房公积金.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E4%BD%8F%E6%88%BF%E5%85%AC%E7%A7%AF%E9%87%91",
+      "chars": 1617
+    },
+    {
+      "requested_title": "信息檢索",
+      "title": "信息檢索",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\信息檢索.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E4%BF%A1%E6%81%AF%E6%AA%A2%E7%B4%A2",
+      "chars": 1393
+    },
+    {
+      "requested_title": "全国硕士研究生招生考试",
+      "title": "全国硕士研究生招生考试",
+      "group": "campus",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\全国硕士研究生招生考试.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%85%A8%E5%9B%BD%E7%A1%95%E5%A3%AB%E7%A0%94%E7%A9%B6%E7%94%9F%E6%8B%9B%E7%94%9F%E8%80%83%E8%AF%95",
+      "chars": 3847
+    },
+    {
+      "requested_title": "华中科技大学",
+      "title": "华中科技大学",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\华中科技大学.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%8D%8E%E4%B8%AD%E7%A7%91%E6%8A%80%E5%A4%A7%E5%AD%A6",
+      "chars": 4672
+    },
+    {
+      "requested_title": "大型语言模型",
+      "title": "大型语言模型",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\大型语言模型.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%A4%A7%E5%9E%8B%E8%AF%AD%E8%A8%80%E6%A8%A1%E5%9E%8B",
+      "chars": 4674
+    },
+    {
+      "requested_title": "大學",
+      "title": "大學",
+      "group": "campus",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\大學.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%A4%A7%E5%AD%B8",
+      "chars": 4608
+    },
+    {
+      "requested_title": "学习",
+      "title": "学习",
+      "group": "campus",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\学习.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%AD%A6%E4%B9%A0",
+      "chars": 3383
+    },
+    {
+      "requested_title": "实习",
+      "title": "实习",
+      "group": "career",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\实习.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E5%AE%9E%E4%B9%A0",
+      "chars": 872
+    },
+    {
+      "requested_title": "招聘",
+      "title": "招聘",
+      "group": "career",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\招聘.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%8B%9B%E8%81%98",
+      "chars": 450
+    },
+    {
+      "requested_title": "提示工程",
+      "title": "提示工程",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\提示工程.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E7%A4%BA%E5%B7%A5%E7%A8%8B",
+      "chars": 1637
+    },
+    {
+      "requested_title": "时间管理",
+      "title": "时间管理",
+      "group": "campus",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\时间管理.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%97%B6%E9%97%B4%E7%AE%A1%E7%90%86",
+      "chars": 1538
+    },
+    {
+      "requested_title": "最邻近搜索",
+      "title": "最邻近搜索",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\最邻近搜索.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%9C%80%E9%82%BB%E8%BF%91%E6%90%9C%E7%B4%A2",
+      "chars": 1909
+    },
+    {
+      "requested_title": "机器学习",
+      "title": "机器学习",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\机器学习.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0",
+      "chars": 4645
+    },
+    {
+      "requested_title": "武汉东湖新技术开发区",
+      "title": "武汉东湖新技术开发区",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\武汉东湖新技术开发区.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%AD%A6%E6%B1%89%E4%B8%9C%E6%B9%96%E6%96%B0%E6%8A%80%E6%9C%AF%E5%BC%80%E5%8F%91%E5%8C%BA",
+      "chars": 975
+    },
+    {
+      "requested_title": "武汉大学",
+      "title": "武汉大学",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\武汉大学.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%AD%A6%E6%B1%89%E5%A4%A7%E5%AD%A6",
+      "chars": 4642
+    },
+    {
+      "requested_title": "武汉市",
+      "title": "武汉市",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\武汉市.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%AD%A6%E6%B1%89%E5%B8%82",
+      "chars": 4560
+    },
+    {
+      "requested_title": "武汉科技大学",
+      "title": "武汉科技大学",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\武汉科技大学.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%AD%A6%E6%B1%89%E7%A7%91%E6%8A%80%E5%A4%A7%E5%AD%A6",
+      "chars": 4653
+    },
+    {
+      "requested_title": "求职",
+      "title": "求职",
+      "group": "career",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\求职.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%B1%82%E8%81%8C",
+      "chars": 1072
+    },
+    {
+      "requested_title": "深度学习",
+      "title": "深度学习",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\深度学习.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0",
+      "chars": 4654
+    },
+    {
+      "requested_title": "社会保险",
+      "title": "社会保险",
+      "group": "wuhan_life",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\社会保险.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E7%A4%BE%E4%BC%9A%E4%BF%9D%E9%99%A9",
+      "chars": 4622
+    },
+    {
+      "requested_title": "職業",
+      "title": "職業",
+      "group": "career",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\職業.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E8%81%B7%E6%A5%AD",
+      "chars": 1072
+    },
+    {
+      "requested_title": "自然语言处理",
+      "title": "自然语言处理",
+      "group": "agent_rag",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\自然语言处理.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E8%87%AA%E7%84%B6%E8%AF%AD%E8%A8%80%E5%A4%84%E7%90%86",
+      "chars": 4673
+    },
+    {
+      "requested_title": "高等教育",
+      "title": "高等教育",
+      "group": "campus",
+      "path": "D:\\deepseekworkspace\\personax_project\\knowledge\\public\\wikipedia_zh\\高等教育.md",
+      "source_url": "https://zh.wikipedia.org/wiki/%E9%AB%98%E7%AD%89%E6%95%99%E8%82%B2",
+      "chars": 1079
+    }
+  ],
+  "skipped": []
+}

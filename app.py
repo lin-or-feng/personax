@@ -7,6 +7,7 @@
 功能页：
 - 📝 生成与编辑  生成标题/正文/标签 → 自由编辑 → 检验（合规+风格+就绪）→ 发布
 - 🗓️ 内容库与定时  管理 content_bank 稿件、设置发布时间、执行到期任务
+- 💬 AI 助手      有状态问答 → 按需 RAG → 引用与 Trace
 - ⚙️ 设置        人格/生成参数（内容格式）、合规词表，可视化编辑
 - 📊 状态与日志  发布留痕、审计摘要、一键评测
 """
@@ -18,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -31,6 +33,7 @@ COMPLIANCE_PATH = BASE / "config" / "compliance.yaml"
 BANK_DIR = BASE / "content_bank"
 LOG_PATH = BASE / "publish_log.json"
 STATE_PATH = BASE / "storage_state.json"
+ASSISTANT_CHECKPOINT_PATH = BASE / "logs" / "assistant_checkpoints.sqlite3"
 
 st.set_page_config(page_title="PersonaX 小红书工作台", page_icon="🍃", layout="wide")
 
@@ -145,6 +148,34 @@ def _diff_highlight(before: str, after: str) -> str:
     return "".join(out)
 
 
+def _render_assistant_meta(message: dict) -> None:
+    """渲染助手消息的来源与执行轨迹。"""
+    sources = message.get("sources") or []
+    if sources:
+        with st.expander(f"📚 引用来源（{len(sources)}）"):
+            for source in sources:
+                ref = source.get("ref_id", "?")
+                title = source.get("title", "未命名来源")
+                url = source.get("source_url") or ""
+                origin = source.get("source") or "本地知识库"
+                score = float(source.get("score") or 0.0)
+                if url:
+                    st.markdown(f"**[{ref}] [{title}]({url})** · `{origin}` · 相关度 {score:.3f}")
+                else:
+                    st.markdown(f"**[{ref}] {title}** · `{origin}` · 相关度 {score:.3f}")
+                st.caption(source.get("excerpt") or "")
+    trace = message.get("trace") or []
+    if trace:
+        with st.expander(f"🔎 Agent Trace（{len(trace)} 步）"):
+            rows = [
+                [item.get("step"), item.get("worker"), item.get("action"),
+                 item.get("status"), item.get("duration_ms"), item.get("detail")]
+                for item in trace
+            ]
+            st.markdown(_md_table(
+                ["step", "worker", "action", "status", "ms", "detail"], rows))
+
+
 # ---------- 会话状态 ----------
 
 def init_state():
@@ -157,6 +188,8 @@ def init_state():
     s.setdefault("gen_ts", 0)            # 生成版本号：换 key 清掉旧编辑框输入
     s.setdefault("jump_target", None)    # 合规跳转定位目标 dict(field, match, suggestion)
     s.setdefault("last_fix", None)       # 最近一次就地修改 dict(field, before, after)
+    s.setdefault("assistant_messages", [])
+    s.setdefault("assistant_thread_id", f"ui-{uuid.uuid4().hex[:12]}")
 
 
 init_state()
@@ -166,7 +199,7 @@ with st.sidebar:
     st.caption("小红书内容生成 · 检验 · 定时发布")
     page = st.radio(
         "导航",
-        ["📝 生成与编辑", "🗓️ 内容库与定时", "📚 知识库", "⚙️ 设置", "📊 状态与日志"],
+        ["📝 生成与编辑", "💬 AI 助手", "🗓️ 内容库与定时", "📚 知识库", "⚙️ 设置", "📊 状态与日志"],
         label_visibility="collapsed",
         key="nav",
     )
@@ -499,7 +532,118 @@ if page == "📝 生成与编辑":
 
 
 # ============================================================
-# 页 2：内容库与定时
+# 页 2：AI 助手
+# ============================================================
+elif page == "💬 AI 助手":
+    st.header("💬 PersonaX AI 助手")
+    st.caption("按需检索本地知识库，回答附来源与执行轨迹。助手没有发布权限，不会触发真实发布。")
+
+    from core.assistant import AssistantCheckpointStore, AssistantOrchestrator
+    from core.llm import _backend, _ollama_reachable
+    from core.types import AssistantRequest, ChatMessage
+
+    a1, a2, a3 = st.columns([2, 2, 1])
+    backend_labels = ["ollama（本地）", "deepseek（云端）", "offline（离线模板）"]
+    current_backend = _backend()
+    backend_index = {"ollama": 0, "deepseek": 1, "offline": 2}.get(current_backend, 0)
+    assistant_backend_label = a1.selectbox(
+        "对话后端", backend_labels, index=backend_index, key="assistant_backend")
+    assistant_backend = assistant_backend_label.split("（", 1)[0]
+    if assistant_backend == "ollama":
+        assistant_models = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "deepseek-r1:7b"]
+    elif assistant_backend == "deepseek":
+        assistant_models = ["deepseek-chat", "deepseek-reasoner"]
+    else:
+        assistant_models = ["离线模板"]
+    assistant_model = a2.selectbox("模型", assistant_models, key="assistant_model")
+    use_knowledge = a3.checkbox("本地知识库", value=True, key="assistant_use_kb")
+    llm_configure(
+        backend=assistant_backend,
+        model=None if assistant_backend == "offline" else assistant_model,
+        temperature=0.3,
+        max_tokens=700,
+    )
+
+    if assistant_backend == "ollama":
+        st.caption(f"Ollama：{'✅ 已连接' if _ollama_reachable() else '❌ 未连接'} · 对话最多 4 步 · 最近 8 条消息进入上下文")
+    elif assistant_backend == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
+        st.warning("未配置 DEEPSEEK_API_KEY；请选择本地 Ollama，或在 `.env` 中配置 Key。")
+
+    clear_col, info_col = st.columns([1, 4])
+    if clear_col.button("🧹 清空对话", width="stretch"):
+        AssistantCheckpointStore(ASSISTANT_CHECKPOINT_PATH).delete(
+            st.session_state.assistant_thread_id)
+        st.session_state.assistant_messages = []
+        st.session_state.assistant_thread_id = f"ui-{uuid.uuid4().hex[:12]}"
+        st.rerun()
+    info_col.caption(f"会话：`{st.session_state.assistant_thread_id}` · Checkpoint 仅保存在本机 D 盘项目目录")
+
+    if not st.session_state.assistant_messages:
+        st.info("可以问项目架构、RAG 检索、内容优化或使用方法。先从下面任选一个问题开始。")
+
+    suggested_prompt = None
+    q1, q2, q3 = st.columns(3)
+    if q1.button("解释 PersonaX 2.0 架构", width="stretch"):
+        suggested_prompt = "请解释 PersonaX 2.0 的 AI 助手架构和一次对话的执行流程。"
+    if q2.button("分析 RAG 检索链路", width="stretch"):
+        suggested_prompt = "项目里的 BM25、dense kNN、RRF 和相关性门控分别解决什么问题？"
+    if q3.button("给项目优化建议", width="stretch"):
+        suggested_prompt = "结合当前 PersonaX 项目，给我 3 条优先级最高、可验证的优化建议。"
+
+    for message in st.session_state.assistant_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            if message["role"] == "assistant":
+                _render_assistant_meta(message)
+
+    typed_prompt = st.chat_input(
+        "输入问题，Enter 发送（不会自动发布内容）",
+        max_chars=2_000,
+        submit_mode="disable",
+    )
+    prompt = suggested_prompt or typed_prompt
+    if prompt:
+        history = [
+            ChatMessage(role=item["role"], content=item["content"])
+            for item in st.session_state.assistant_messages
+        ]
+        user_message = {"role": "user", "content": prompt}
+        st.session_state.assistant_messages.append(user_message)
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        persona = load_persona()
+        harness = Harness(RuleConfig(**persona.get("harness", {})))
+        service = AssistantOrchestrator(
+            persona,
+            harness=harness,
+            checkpoint_store=AssistantCheckpointStore(ASSISTANT_CHECKPOINT_PATH),
+            prompt_path=BASE / "config" / "assistant_prompts.yaml",
+        )
+        with st.chat_message("assistant"):
+            with st.spinner("Supervisor 正在规划并回答…"):
+                response = service.reply(AssistantRequest(
+                    question=prompt,
+                    history=history,
+                    thread_id=st.session_state.assistant_thread_id,
+                    use_knowledge=use_knowledge,
+                    max_steps=4,
+                ))
+            assistant_message = {
+                "role": "assistant",
+                "content": response.answer,
+                "sources": [source.model_dump() for source in response.sources],
+                "trace": [item.model_dump() for item in response.trace],
+                "route": response.route,
+                "checkpoint_id": response.checkpoint_id,
+            }
+            st.markdown(response.answer)
+            _render_assistant_meta(assistant_message)
+        st.session_state.assistant_messages.append(assistant_message)
+
+
+# ============================================================
+# 页 3：内容库与定时
 # ============================================================
 elif page == "🗓️ 内容库与定时":
     st.header("🗓️ 内容库 · 定时发布")
@@ -600,7 +744,7 @@ elif page == "🗓️ 内容库与定时":
 
 
 # ============================================================
-# 页 3：知识库（喂优质范例 → 让生成更自然）
+# 页 4：知识库（喂优质范例 → 让生成更自然）
 # ============================================================
 elif page == "📚 知识库":
     st.header("📚 知识库（喂优质范例 · 让生成更自然）")
@@ -632,27 +776,42 @@ elif page == "📚 知识库":
 
     st.divider()
     st.subheader("📚 现有知识库")
-    kb_files = sorted(KNOWLEDGE_DIR.glob("*.md"))
+    kb_files = sorted(KNOWLEDGE_DIR.rglob("*.md"))
     if not kb_files:
         st.info("知识库为空，先在上面粘贴一篇进去")
+    public_count = sum("public" in f.relative_to(KNOWLEDGE_DIR).parts for f in kb_files)
+    st.caption(
+        f"共 {len(kb_files)} 篇：自建范例 {len(kb_files) - public_count} 篇，"
+        f"可溯源公开参考 {public_count} 篇。公开资料只用于事实背景，不会被当作文风范例。"
+    )
     for f in kb_files:
         content = f.read_text(encoding="utf-8", errors="ignore")
-        topic = ""
-        for line in content.splitlines():
-            if line.startswith("topic:"):
-                topic = line.split(":", 1)[1].strip()
-                break
+        from core.rag import _parse_frontmatter
+        metadata, _ = _parse_frontmatter(content)
+        topic = str(metadata.get("topic") or f.stem)
+        role = str(metadata.get("retrieval_role") or "example")
+        role_label = "公开参考" if role == "reference" else "自建范例"
+        relative_path = f.relative_to(KNOWLEDGE_DIR)
         c1, c2 = st.columns([3, 1])
-        c1.caption(f"**{topic or f.stem}** ｜ `{f.name}` ｜ {len(content)} 字")
-        with st.expander("查看/复制这篇范例"):
-            st.text(content)
-        if c2.button("🗑️ 删除", key=f"kbdel_{f.stem}", width="stretch"):
+        c1.caption(f"**{topic}** ｜ {role_label} ｜ `{relative_path}` ｜ {len(content)} 字")
+        item_key = relative_path.as_posix()
+        details = st.expander(
+            "查看/复制这篇资料",
+            on_change="rerun",
+            key=f"kbview_{item_key}",
+        )
+        if details.open:
+            with details:
+                if metadata.get("source_url"):
+                    st.link_button("打开原始来源", str(metadata["source_url"]))
+                st.text(content)
+        if c2.button("🗑️ 删除", key=f"kbdel_{item_key}", width="stretch"):
             f.unlink(missing_ok=True)
             st.rerun()
 
 
 # ============================================================
-# 页 4：设置（内容格式 / 人格 / 合规词表）
+# 页 5：设置（内容格式 / 人格 / 合规词表）
 # ============================================================
 elif page == "⚙️ 设置":
     st.header("⚙️ 设置：发布内容格式 · 人格 · 合规")
@@ -789,7 +948,7 @@ elif page == "⚙️ 设置":
 
 
 # ============================================================
-# 页 4：状态与日志
+# 页 6：状态与日志
 # ============================================================
 else:
     st.header("📊 状态与日志")
@@ -820,7 +979,8 @@ else:
         st.markdown(_md_table(["id", "topic", "scheduled_at", "status", "url"], rows))
 
     st.subheader("🧪 评测")
-    if st.button("▶️ 运行评测（eval/scorer.py → eval_results.csv）"):
+    eval_col1, eval_col2 = st.columns(2)
+    if eval_col1.button("▶️ 内容生成评测", width="stretch"):
         with st.spinner("评测中…"):
             proc = subprocess.run([sys.executable, "eval/scorer.py"], cwd=str(BASE),
                                   capture_output=True, text=True, encoding="utf-8")
@@ -828,5 +988,11 @@ else:
         csv_path = BASE / "eval_results.csv"
         if csv_path.exists():
             st.text(csv_path.read_text(encoding="utf-8-sig"))
+    if eval_col2.button("▶️ AI 助手离线回归", width="stretch"):
+        with st.spinner("验证路由、引用、步数与回答完整性…"):
+            proc = subprocess.run(
+                [sys.executable, "-m", "eval.assistant_scorer"], cwd=str(BASE),
+                capture_output=True, text=True, encoding="utf-8")
+        st.code(proc.stdout[-4_000:] if proc.stdout else proc.stderr[-1_200:])
 
-    st.caption("审计日志（AuditLog）为每次运行的进程内记录；跨进程审计以 publish_log.json 为准。")
+    st.caption("AI 助手回归不调用真实 LLM，只验证工程闭环；回答质量仍需另做人工或 LLM-as-Judge 评估。")

@@ -30,6 +30,7 @@ _load_project_env()
 
 
 _client: Optional[object] = None
+_CLIENT_BACKEND: str | None = None
 _OpenAI = None
 _RETRYABLE: tuple = ()
 _OVERRIDES: dict = {}   # 运行时覆盖（可视化界面设置后端/模型/温度）
@@ -42,8 +43,15 @@ def configure(*, backend: str | None = None, model: str | None = None,
 
     backend: "ollama"（本地免费）/ "deepseek"（云端）/ "offline"（模板）
     """
+    global _client, _CLIENT_BACKEND
     if backend is not None:
-        _OVERRIDES["backend"] = backend.strip().lower()
+        normalized_backend = backend.strip().lower()
+        if normalized_backend != _OVERRIDES.get("backend"):
+            # OpenAI-compatible clients carry a fixed base_url. Switching from
+            # Ollama to DeepSeek (or back) must not reuse the previous client.
+            _client = None
+            _CLIENT_BACKEND = None
+        _OVERRIDES["backend"] = normalized_backend
     if model is not None:
         _OVERRIDES["model"] = model
     if temperature is not None:
@@ -94,8 +102,12 @@ def _default_model() -> str:
 
 def _get_client():
     """返回 OpenAI 兼容客户端；无可用后端返回 None（走本地模板）。"""
-    global _client, _OpenAI, _RETRYABLE
+    global _client, _CLIENT_BACKEND, _OpenAI, _RETRYABLE
     backend = _backend()
+
+    if _CLIENT_BACKEND is not None and _CLIENT_BACKEND != backend:
+        _client = None
+        _CLIENT_BACKEND = None
 
     if backend == "offline":
         return None   # 强制模板（免费/离线）
@@ -114,6 +126,7 @@ def _get_client():
                 timeout=float(os.getenv("DEEPSEEK_TIMEOUT", "120")),
                 max_retries=0,
             )
+            _CLIENT_BACKEND = backend
         return _client
 
     api_key = os.getenv("DEEPSEEK_API_KEY")
@@ -139,6 +152,7 @@ def _get_client():
             timeout=float(os.getenv("DEEPSEEK_TIMEOUT", "30")),
             max_retries=0,  # 重试由本模块统一控制（指数退避）
         )
+        _CLIENT_BACKEND = backend
     return _client
 
 

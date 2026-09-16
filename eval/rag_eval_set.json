@@ -1,0 +1,8 @@
+[
+  {"query": "秋招面试穿什么更正式", "expected_sources": ["秋招穿搭.md"]},
+  {"query": "考研英语真题应该怎样复习", "expected_sources": ["考研英语.md"]},
+  {"query": "租房签合同有哪些坑", "expected_sources": ["租房避坑.md"]},
+  {"query": "面试衬衫和西装怎么搭配", "expected_sources": ["秋招穿搭.md"]},
+  {"query": "背单词和阅读理解复习计划", "expected_sources": ["考研英语.md"]},
+  {"query": "看房时如何检查押金合同", "expected_sources": ["租房避坑.md"]}
+]

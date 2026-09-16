@@ -134,6 +134,120 @@ class TestPromptsAsset:
 
 
 class TestChineseRAG:
+    def test_bm25_prefers_exact_repeated_terms(self):
+        from core.rag import BM25Index, Chunk
+        chunks = [
+            Chunk(id="a", text="秋招 面试 秋招 简历"),
+            Chunk(id="b", text="考研 英语 复习"),
+        ]
+        rows = BM25Index().search("秋招 简历", chunks, top_k=2)
+        assert rows[0][0].id == "a" and rows[0][1] > 0
+        assert all(score > 0 for _, score in rows)
+
+    def test_rrf_fuses_independent_rankings(self):
+        from core.rag import Chunk, reciprocal_rank_fusion
+        a, b = Chunk(id="a", text="a"), Chunk(id="b", text="b")
+        fused = reciprocal_rank_fusion([[(a, 9.0), (b, 2.0)], [(b, 0.9), (a, 0.1)]])
+        assert {item_id for item_id, _ in fused} == {"a", "b"}
+
+    def test_dense_search_uses_exact_knn(self):
+        from core.rag import VectorStore, Chunk
+        store = VectorStore()
+        store.add(Chunk(id="a", text="秋招面试穿搭"))
+        store.add(Chunk(id="b", text="考研英语复习"))
+        rows = store.dense_search("秋招", top_k=1)
+        assert rows and rows[0][0].id == "a"
+        assert store.last_dense_mode == "knn-exact"
+
+    def test_ollama_embedder_uses_batch_embed_api(self, monkeypatch):
+        from core.rag import OllamaEmbedder
+
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return b'{"embeddings": [[1.0, 0.0], [0.0, 1.0]]}'
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        embedder = OllamaEmbedder(model="bge-m3")
+        vectors = embedder.encode(["秋招", "考研"])
+        assert vectors == [[1.0, 0.0], [0.0, 1.0]]
+        assert captured["url"].endswith("/api/embed")
+        assert captured["payload"] == {"model": "bge-m3", "input": ["秋招", "考研"]}
+        assert embedder.dimension == 2
+
+    def test_ollama_embedding_normalizes_chat_v1_url(self, monkeypatch):
+        from core.rag import _make_embedder
+
+        monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1")
+        monkeypatch.delenv("RAG_OLLAMA_BASE_URL", raising=False)
+        embedder = _make_embedder("ollama", "bge-m3")
+        assert embedder.base_url == "http://127.0.0.1:11434"
+
+    def test_document_embedding_cache_persists_without_caching_queries(self, workdir):
+        from core.rag import CachedEmbedder
+
+        class FakeEmbedder:
+            name = "fake:model"
+            dimension = 2
+
+            def __init__(self):
+                self.calls = 0
+
+            def encode(self, texts):
+                self.calls += 1
+                return [[float(len(text)), 1.0] for text in texts]
+
+        cache_path = workdir / "embeddings.sqlite3"
+        first_backend = FakeEmbedder()
+        first = CachedEmbedder(first_backend, cache_path)
+        assert first.encode_documents(["秋招", "面试"]) == [[2.0, 1.0], [2.0, 1.0]]
+        assert first_backend.calls == 1 and first.cache_misses == 2
+
+        second_backend = FakeEmbedder()
+        second = CachedEmbedder(second_backend, cache_path)
+        assert second.encode_documents(["秋招", "面试"]) == [[2.0, 1.0], [2.0, 1.0]]
+        assert second_backend.calls == 0 and second.cache_hits == 2
+        second.encode(["用户查询"])
+        assert second_backend.calls == 1
+
+    def test_rule_query_rewrite_is_explainable(self):
+        from core.rag import RuleBasedQueryEnhancer
+        variants = RuleBasedQueryEnhancer().rewrite("请问秋招简历如何优化？")
+        assert variants[0] == "请问秋招简历如何优化？"
+        assert any("如何" not in item for item in variants[1:])
+
+    def test_cross_encoder_reranker_is_wired_into_pipeline(self):
+        from core.rag import Chunk, RAGPipeline, VectorStore
+
+        class FakeReranker:
+            model_name = "fake-cross-encoder"
+
+            def rerank(self, query, chunks, top_k):
+                rows = [(chunk, 10.0 if chunk.id == "b" else 1.0) for chunk in chunks]
+                return sorted(rows, key=lambda item: item[1], reverse=True)[:top_k]
+
+        store = VectorStore()
+        store.add(Chunk(id="a", text="秋招简历优化"))
+        store.add(Chunk(id="b", text="秋招面试技巧"))
+        rag = RAGPipeline(store, reranker=FakeReranker())
+        hits = rag.retrieve_hits("秋招", top_k=2)
+        assert hits[0].chunk.id == "b"
+        assert hits[0].rerank_score == 10.0
+        assert rag.last_trace["reranker"] == "fake-cross-encoder"
+
     def test_bigram_similarity_works(self):
         from core.rag import VectorStore, Chunk, RAGPipeline
         store = VectorStore()
@@ -147,6 +261,24 @@ class TestChineseRAG:
         from core.rag import build_rag_from_dir
         pipe = build_rag_from_dir("knowledge")
         assert len(pipe.store.chunks) >= 2
+
+    def test_build_rag_reads_nested_public_reference_metadata(self, workdir):
+        from core.rag import build_rag_from_dir
+
+        nested = workdir / "public" / "wikipedia_zh"
+        nested.mkdir(parents=True)
+        (nested / "人工智能.md").write_text(
+            "---\ntopic: 人工智能\nkeywords: [AI, 机器学习]\n"
+            "retrieval_role: reference\nsource: Wikipedia 中文\n"
+            "source_url: https://zh.wikipedia.org/wiki/test\n"
+            "license: CC BY-SA 4.0\n---\n\n人工智能是计算机科学的研究领域。",
+            encoding="utf-8",
+        )
+        pipe = build_rag_from_dir(workdir, embedding_backend="hashing")
+        chunk = next(iter(pipe.store.chunks.values()))
+        assert chunk.metadata["retrieval_role"] == "reference"
+        assert chunk.metadata["source"].endswith("人工智能.md")
+        assert chunk.metadata["source_name"] == "Wikipedia 中文"
 
     def test_frontmatter_parse(self):
         from core.rag import _parse_frontmatter, build_rag_from_dir
@@ -185,6 +317,7 @@ class TestSkillsQuality:
         orch = Orchestrator(persona=persona, harness=Harness(RuleConfig(**persona["harness"])))
         draft = orch.run("秋招穿搭")
         assert draft.title and draft.body and draft.tags   # 离线链路不因 RAG 注入而破坏
+        assert draft.metadata["rag_trace"]["fusion"] == "rrf"
 
     def test_tag_fallback_on_garbage_output(self):
         # 离线/异常输出会被清洗并回退模板标签，绝不产出垃圾标签

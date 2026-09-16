@@ -25,12 +25,39 @@ class Orchestrator:
         draft = Draft(topic=topic)
         # 提示词资产 + RAG 知识库（可热更新，缺省安全回退）
         prompts = load_prompts(self.persona.get("prompts_path", "config/prompts.yaml"))
-        rag_pipe = build_rag_from_dir(self.persona.get("rag", {}).get("knowledge_dir", "knowledge"))
+        rag_cfg = self.persona.get("rag", {}) or {}
+        rag_pipe = build_rag_from_dir(
+            rag_cfg.get("knowledge_dir", "knowledge"),
+            chunk_size=int(rag_cfg.get("chunk_size", 600)),
+            embedding_backend=rag_cfg.get("embedding_backend"),
+            embedding_model=rag_cfg.get("embedding_model"),
+            query_enhancer=rag_cfg.get("query_enhancer"),
+            enable_hyde=bool(rag_cfg.get("enable_hyde", False)),
+            reranker=rag_cfg.get("reranker"),
+            reranker_model=rag_cfg.get("reranker_model"),
+        )
         # 只召回与主题足够贴近的范例（min_score），避免不相干知识跑题；缺省空列表
-        rag_examples = (
-            [c.text for c in rag_pipe.retrieve_relevant(topic, top_k=2, min_score=0.10)]
+        rag_chunks = (
+            rag_pipe.retrieve_relevant(
+                topic,
+                top_k=int(rag_cfg.get("top_k", 2)),
+                min_score=float(rag_cfg.get("min_score", 0.10)),
+            )
             if rag_pipe.store.chunks else []
         )
+        rag_examples = [
+            c.text for c in rag_chunks
+            if (c.metadata or {}).get("retrieval_role", "example") != "reference"
+        ]
+        rag_references = [
+            c.text for c in rag_chunks
+            if (c.metadata or {}).get("retrieval_role") == "reference"
+        ]
+        rag_pipe.last_trace["roles"] = {
+            "examples": len(rag_examples),
+            "references": len(rag_references),
+        }
+        draft.metadata["rag_trace"] = rag_pipe.last_trace
         # 联网热点（可选：WEB_SEARCH_ENABLED=1 开启；失败/关闭返回空串，不影响生成）
         from .websearch import build_web_context
         web_context = build_web_context(topic)
@@ -40,6 +67,7 @@ class Orchestrator:
             user_id=user_id,
             prompts=prompts,
             rag_examples=rag_examples,
+            rag_references=rag_references,
             web_context=web_context,
         )
         chain = skill_chain or [name for name, _ in route_skills(topic, top_k=3)]
@@ -60,6 +88,7 @@ class Orchestrator:
                 "persona": self.persona,
                 "prompts": prompts,
                 "rag_examples": rag_examples,
+                "rag_references": rag_references,
                 "web_context": web_context,
             }))
             draft = result.draft
@@ -82,6 +111,7 @@ class Orchestrator:
                 break
             result = writer.run(SkillInput(draft=draft, context={
                 "persona": self.persona, "prompts": prompts, "rag_examples": rag_examples,
+                "rag_references": rag_references, "web_context": web_context,
             }))
             draft = result.draft
             if draft.body == before:

@@ -1,0 +1,10 @@
+[
+  {"id": "direct_greeting", "question": "你好", "use_knowledge": true, "expected_route": "direct", "citation_required": false},
+  {"id": "direct_thanks", "question": "谢谢", "use_knowledge": true, "expected_route": "direct", "citation_required": false},
+  {"id": "rag_pipeline", "question": "PersonaX 的 BM25 和 RRF 怎么配合？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "rag_gate", "question": "相关性门控为什么能减少跑题？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "agent_trace", "question": "Agent Trace 能帮助定位什么问题？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "checkpoint", "question": "Checkpoint 在多轮对话里有什么用？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "tool_contract", "question": "MCP-ready 工具契约包含哪些字段？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "manual_off", "question": "解释 RAG", "use_knowledge": false, "expected_route": "direct", "citation_required": false}
+]

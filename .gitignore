@@ -8,6 +8,7 @@ publish_log.json
 eval_results.csv
 logs/
 .tmp/
+.rag_cache/
 .tmp_*
 pxtest_*/
 probe_*/

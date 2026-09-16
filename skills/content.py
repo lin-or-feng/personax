@@ -70,6 +70,23 @@ def _fmt_examples(examples) -> str:
             "但内容要贴合你自己的主题，不要照搬它的原句）：\n" + joined)
 
 
+def _fmt_references(references) -> str:
+    """RAG public references -> factual context, never a style imitation target."""
+    if not references:
+        return ""
+    picked = []
+    for reference in references[:2]:
+        text = str(reference).strip()
+        if len(text) > 500:
+            text = text[:500] + "…"
+        picked.append(text)
+    joined = "\n---\n".join(picked)
+    return (
+        "\n\n以下是可溯源的背景资料，只用于核对概念和事实，不要模仿百科文风，"
+        "不要把资料中未核验的时效性数据当作当前事实：\n" + joined
+    )
+
+
 def _clean_lines(text: str) -> list[str]:
     """清洗 LLM 输出行：去序号/列表符号/空行/垃圾占位行"""
     out = []
@@ -198,6 +215,7 @@ class BodyWriter(Skill):
         persona = inp.context.get("persona", {})
         tpl = _tpl(inp, "body")
         rag = _fmt_examples(inp.context.get("rag_examples"))
+        rag += _fmt_references(inp.context.get("rag_references"))
         web = str(inp.context.get("web_context") or "")
         prompt = tpl.get("user", DEFAULT_PROMPTS["body"]["user"]).format(
             topic=draft.topic,
@@ -218,7 +236,10 @@ class BodyWriter(Skill):
                 f"你们有什么好方法？评论区一起交流呀。冲鸭🍃"
             )
         draft.body = _sanitize_body(_depure_markdown(text))
-        return SkillOutput(draft=draft, notes=[f"正文已生成（RAG范例{len(inp.context.get('rag_examples') or [])}条）"])
+        return SkillOutput(draft=draft, notes=[
+            f"正文已生成（RAG范例{len(inp.context.get('rag_examples') or [])}条，"
+            f"事实资料{len(inp.context.get('rag_references') or [])}条）"
+        ])
 
 
 @register
