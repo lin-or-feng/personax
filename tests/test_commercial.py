@@ -172,6 +172,55 @@ class TestChineseRAG:
         assert rows and rows[0][0].id == "a"
         assert store.last_dense_mode == "knn-exact"
 
+    def test_retrieval_mode_supports_ablation_and_validates_input(self):
+        from core.rag import Chunk, HashingEmbedder, RAGPipeline, VectorStore
+
+        class CountingEmbedder(HashingEmbedder):
+            def __init__(self):
+                super().__init__()
+                self.query_calls = 0
+
+            def encode(self, texts):
+                self.query_calls += 1
+                return super().encode(texts)
+
+        embedder = CountingEmbedder()
+        store = VectorStore(embedder=embedder)
+        store.add(Chunk(id="a", text="BM25 关键词检索"))
+        store.add(Chunk(id="b", text="dense 向量召回"))
+        embedder.query_calls = 0
+
+        lexical = RAGPipeline(store, retrieval_mode="bm25")
+        assert lexical.retrieve_hits("BM25", top_k=1)
+        assert embedder.query_calls == 0
+        assert lexical.last_trace["retrieval_mode"] == "lexical"
+        assert lexical.last_trace["dense_mode"] == "disabled"
+
+        dense = RAGPipeline(store, retrieval_mode="dense")
+        assert dense.retrieve_hits("向量召回", top_k=1)
+        assert embedder.query_calls > 0
+        assert dense.last_trace["retrieval_mode"] == "dense"
+
+        with pytest.raises(ValueError, match="retrieval_mode"):
+            RAGPipeline(store, retrieval_mode="unsupported")
+
+    def test_min_score_is_calibrated_per_embedding_backend(self):
+        from core.rag import Chunk, RAGPipeline, VectorStore, resolve_min_score
+
+        pipeline = RAGPipeline(VectorStore())
+        pipeline.store.add(Chunk(id="a", text="测试文档"))
+        config = {
+            "min_score": 0.12,
+            "min_score_by_backend": {"hashing": 0.15, "ollama": 0.50},
+        }
+
+        assert resolve_min_score(config, pipeline) == 0.15
+        pipeline.store.embedder.name = "ollama:bge-m3"
+        assert resolve_min_score(config, pipeline) == 0.50
+        assert resolve_min_score({"min_score": 0.12}, pipeline) == 0.12
+        with pytest.raises(ValueError, match="min_score"):
+            resolve_min_score({"min_score": 1.5}, pipeline)
+
     def test_ollama_embedder_uses_batch_embed_api(self, monkeypatch):
         from core.rag import OllamaEmbedder
 
@@ -434,6 +483,22 @@ class TestWebSearch:
                             lambda q, top_k=3: ["字典解释秋字的意思", "别的话题内容"])
         assert websearch.build_web_context("秋招穿搭") == ""
 
+    def test_web_search_has_sliding_request_limit(self, monkeypatch):
+        from core import websearch
+
+        websearch._OVERRIDES.clear()
+        websearch._RATE_LIMITERS.clear()
+        websearch._SEMAPHORES.clear()
+        monkeypatch.setenv("WEB_SEARCH_ENABLED", "1")
+        monkeypatch.setenv("WEB_SEARCH_BACKEND", "bing")
+        monkeypatch.setenv("WEB_SEARCH_REQUESTS_PER_MINUTE", "1")
+        monkeypatch.setattr(
+            websearch, "_scrape_bing", lambda query, top_k: ["结果"],
+        )
+
+        assert websearch.search_web("第一次") == ["结果"]
+        assert websearch.search_web("第二次") == []
+
 
 # ---------- 封面生成（多模态） ----------
 
@@ -578,6 +643,22 @@ class TestPublisherSafety:
         res = pub.publish(draft)
         assert not res.success
         assert "限速" in res.message
+
+    def test_real_publish_is_single_flight_per_process(self, workdir):
+        from publishers import xhs
+
+        pub = XhsPlaywrightPublisher(
+            storage_state=str(workdir / "missing.json"), auto_approve=True,
+        )
+        draft = Draft(topic="t", title="标题", body="正文")
+        assert xhs._PUBLISH_SEMAPHORE.acquire(blocking=False)
+        try:
+            result = pub.publish(draft)
+        finally:
+            xhs._PUBLISH_SEMAPHORE.release()
+
+        assert not result.success
+        assert "已有真实发布任务" in result.message
 
 
 # ---------- 调度器 ----------

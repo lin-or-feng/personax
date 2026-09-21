@@ -38,10 +38,20 @@ class KnowledgeSearchTool:
 
     def run(self, inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
         hits = self.pipeline.retrieve_hits(inp.query, top_k=max(inp.top_k * 3, inp.top_k))
-        kept = [
-            hit for hit in hits
-            if max(hit.lexical_score, hit.dense_score) >= inp.min_score
-        ][:inp.top_k]
+        kept = []
+        seen_sources: set[str] = set()
+        for hit in hits:
+            if max(hit.lexical_score, hit.dense_score) < inp.min_score:
+                continue
+            source_key = str(
+                (hit.chunk.metadata or {}).get("source") or hit.chunk.id
+            )
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            kept.append(hit)
+            if len(kept) >= inp.top_k:
+                break
         sources: list[AssistantSource] = []
         for index, hit in enumerate(kept, 1):
             metadata: dict[str, Any] = hit.chunk.metadata or {}

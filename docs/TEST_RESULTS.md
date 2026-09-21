@@ -1,6 +1,6 @@
 # PersonaX 验证记录
 
-> 最后更新：2026-09-16（Asia/Shanghai）  
+> 最后更新：2026-09-21（Asia/Shanghai）
 > 验证边界：本地静态扫描、单元测试和离线评测；未登录或调用小红书，未触发真实发布。
 
 ## 阶段 1：安全基线
@@ -76,10 +76,85 @@
 
 2.2 的可观测边界：运行索引保存主题、状态、节点、耗时、重试和 checkpoint 标识，不复制完整提示词、正文或密钥；真实 LangGraph state 由本地 SQLite checkpointer 管理并只保留最近 100 个 thread。
 
+## 阶段 5：PersonaX 2.3 检索质量基线与证据门禁
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 完整单测 | `python -m pytest` | 104 passed，0 failed，21.13s |
+| 120 条 hashing 门禁 | `python -m eval.rag_scorer --summary-only` | Recall@5=0.8889；门控 Recall@5=0.8056；MRR=0.7775；负例拒检=0.75；无组件降级 |
+| 检索消融 | `python main.py rag-eval --compare --backend hashing --summary-only` | BM25、dense、hybrid 使用同一数据集与门槛；仅 hybrid 全部门禁通过 |
+| 本机 bge-m3 | `python main.py rag-eval --backend ollama --top-k 5 --min-score 0.50 --summary-only` | Recall@5=0.9537；门控 Recall@5=0.9815；MRR=0.8035；负例拒检=1.0；P95=388.5ms；156 cache hits / 0 misses |
+| 助手离线回归 | `python -m eval.assistant_scorer` | 12/12 通过；路由、引用覆盖、引用编号有效性、无证据声明、步数和回答率均为 1.0 |
+| 语法与差异格式 | `python -m compileall -q ...` + `git diff --check` | 通过 |
+
+2.3 的 120 条数据是按当前 27 份知识资料构建的工程回归集，其中 108 条正例、12 条知识库外负例；它用于捕获版本回归，不代表真实用户分布。`min_score` 已按 embedding 后端拆分：hashing=0.15，Ollama/sentence-transformers=0.50；替换模型后必须重新做阈值扫描。
+
+## 阶段 6：AI Studio 界面验收
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| Streamlit 配置 | `python -m streamlit config show` | 亮/暗主题、侧栏主题与最小工具栏配置均成功解析 |
+| 六页浏览器巡检 | Edge + Playwright 依次打开生成、助手、定时、知识库、设置、状态页 | 6/6 页面标题到达，`stException` 均为 0；截图与结构化结果保存至 `artifacts/ui_review/` |
+| 导航回归 | 从内容库“载入编辑”返回生成页 | 旧文案型导航值已迁移为稳定页面 ID `generate` |
+| Python 语法 | `python -m py_compile app.py` | 通过 |
+| 完整单测 | `python -m pytest` | 104 passed，0 failed，23.70s |
+| 密钥与敏感文件 | `python scripts/check_secrets.py --strict` | 通过；扫描 250 个文件，0 个可提交危险项 |
+| 差异格式 | `git diff --check` | 通过 |
+
+本轮只巡检本地界面与已有离线测试，没有触发 LLM 内容生成、平台登录或真实发布。
+
+## 阶段 7：流式对话与分层记忆
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 流式回答单测 | `test_streaming_reply_persists_completed_answer` | 分块输出按顺序合并，完成后保存最终回答与 `mode=stream` Trace |
+| 本机 Ollama 流式冒烟 | `qwen2.5:3b`，`stream=True`，24 token 上限 | 6.78s 返回 4 个内容块，最终文本完整 |
+| 离线流式降级 | `test_llm_stream_has_offline_fallback` | 无云端 Key、无模型调用时仍走统一流接口并返回可显示文本 |
+| 会话恢复 | `test_checkpoint_lists_recent_threads` | 最近会话按更新时间列出，包含消息数与安全截断预览 |
+| 长期记忆 CRUD | `test_long_term_memory_is_explicit_and_deletable` | 主动保存、重复去重、读取和删除均通过 |
+| 记忆注入边界 | `test_saved_memory_cannot_close_context_boundary` | HTML 边界字符被 JSON 转义，记忆无法闭合不可信数据区或覆盖系统指令 |
+| 六页浏览器巡检 | Edge + Playwright | 6/6 页面可达，`stException` 均为 0；助手页成功恢复本地历史并显示记忆控件 |
+| 完整单测 | `python -m pytest` | 110 passed，0 failed，20.09s |
+| 密钥与敏感文件 | `python scripts/check_secrets.py --strict` | 通过；扫描 252 个文件，0 个可提交危险项 |
+| Python 语法与差异格式 | `python -m py_compile ...` + `git diff --check` | 通过 |
+
+验证没有登录或调用小红书，也没有触发真实发布。浏览器巡检没有主动发送 LLM 请求；模型流由确定性分块单测覆盖。
+
+## 阶段 8：有界异步 LLM 与并发压测
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| Semaphore 行为 | `tests/test_async_runtime.py` | 保持输入顺序；并发峰值不超过限制；部分失败可独立统计；两个并行批次共享同一 API 并发门 |
+| 离线异步契约 | `acomplete_batch()` + `acomplete_stream()` | 批处理、异步流和离线降级均通过统一公共入口 |
+| I/O 模拟基准 | 8 任务 × 250ms，Semaphore(2) | 2004.1ms → 1000.8ms；3.992 → 7.994 req/s；2.002x |
+| 本机 Ollama 基准 | `qwen2.5:3b`，4 个约 64 token 请求，Semaphore(2) | 2277.0ms → 2279.6ms；1.757 → 1.755 req/s；0.999x；0 失败 |
+| 本机并发 4 复测 | 同上，Semaphore(4) | 2277.1ms → 2284.8ms；0.997x；提高并发没有加速，因此本地默认 1 |
+| 完整单测 | `python -m pytest` | 114 passed，0 failed，19.20s |
+| Python 语法与差异格式 | `python -m py_compile ...` + `git diff --check` | 通过 |
+
+异步只用于相互独立、以等待为主的任务；依赖型 Agent 链、Playwright 发布、cross-encoder 和单卡模型计算保持串行或批处理。原始报告与复现命令见 `docs/ASYNC_ARCHITECTURE.md`，本轮没有登录或调用小红书，也没有触发真实发布。
+
+## 阶段 9：PersonaX 2.3.1 滑动窗口与双重限流
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 上下文滑动窗口 | `tests/test_limits.py` + `tests/test_assistant.py` | 最近消息优先；消息数、估算 token 和单消息预算均生效；Trace 记录保留/丢弃/截断信息 |
+| 精确请求窗口 | `SlidingWindowRateLimiter` 注入单调时钟测试 | 窗口按单个事件时间过期，不受整分钟边界影响；同步/异步等待路径均通过 |
+| 同步 LLM Semaphore | 3 线程并发调用，Semaphore(1) | 峰值真实调用数为 1，Streamlit/CLI 同步路径不再绕过并发门 |
+| 异步跨批次 Semaphore | 两个批次同时运行，Semaphore(2) | 6 个任务完成，合计真实调用峰值为 2 |
+| 联网搜索双门 | 1 RPM 故障注入 | 第一次返回结果，第二次安全降级为空；正文主链路不阻塞 |
+| 真实发布单飞 | 预占发布 Semaphore 后调用 Publisher | 第二个真实发布立即受控拒绝，未启动浏览器、未消耗平台操作 |
+| 完整单测 | `python -m pytest` | 121 passed，0 failed，19.61s |
+| 一键发布门禁 | `python scripts/release_check.py` | 单测、3/3 稿件合规、密钥、12 条助手回归、120 条 RAG 门禁全部通过，38.72s |
+| 密钥与敏感文件 | `python scripts/check_secrets.py --strict` | 扫描 272 个文件，0 个可提交危险项 |
+| Python 语法与差异格式 | `python -m compileall -q ...` + `git diff --check` | 通过 |
+
+验证只使用离线/确定性故障注入，没有登录或调用小红书，没有触发真实发布。限流器是单进程实现；多 Worker 部署仍需 Redis 等共享计数器与分布式锁。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。
 - 本轮未用受限账号做平台端到端发布测试，这是刻意的安全边界，不代表发布流程已在当前平台状态下验收。
 - 本地 `.env`、登录态和发布日志存在但已被 `.gitignore` 忽略；它们不在本次提交范围。
-- RAG 6 条、助手 8 条均是小样本冒烟集，不可对外宣称为大规模质量基准或线上 SLA。
-- 本机 Ollama 问答暴露了一个可观测信号：当前本地模型可能遗漏行内引用，Reviewer 会补充 `[1]` 并标记降级；后续应用更大人工集验证引用是否准确对应到具体句子。
+- RAG 120 条、助手 12 条仍是围绕当前知识库构建的工程回归集，不可对外宣称为真实用户质量基准或线上 SLA。
+- Reviewer 目前能校验引用编号并披露无证据回答，但不能自动证明每句话都被引用片段支持；仍需人工集或可靠 Judge 评测句子级事实一致性。

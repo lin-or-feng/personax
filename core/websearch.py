@@ -16,13 +16,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import urllib.parse
 import urllib.request
+
+from .limits import SlidingWindowRateLimiter
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
 _OVERRIDES: dict = {}   # 运行时覆盖（可视化界面开关/后端，优先于环境变量）
+_LIMIT_LOCK = threading.Lock()
+_RATE_LIMITERS: dict[tuple[str, int], SlidingWindowRateLimiter] = {}
+_SEMAPHORES: dict[tuple[str, int], threading.BoundedSemaphore] = {}
 
 
 def configure(*, enabled: bool | None = None, backend: str | None = None):
@@ -43,6 +49,30 @@ def _backend() -> str:
     if "backend" in _OVERRIDES:
         return _OVERRIDES["backend"]
     return os.getenv("WEB_SEARCH_BACKEND", "bing").strip().lower()
+
+
+def _positive_env(name: str, default: int, ceiling: int) -> int:
+    try:
+        return max(1, min(int(os.getenv(name, str(default))), ceiling))
+    except (TypeError, ValueError):
+        return default
+
+
+def _controls(backend: str) -> tuple[SlidingWindowRateLimiter, threading.BoundedSemaphore]:
+    rpm = _positive_env("WEB_SEARCH_REQUESTS_PER_MINUTE", 10, 600)
+    concurrency = _positive_env("WEB_SEARCH_MAX_CONCURRENCY", 2, 16)
+    rate_key = (backend, rpm)
+    semaphore_key = (backend, concurrency)
+    with _LIMIT_LOCK:
+        limiter = _RATE_LIMITERS.get(rate_key)
+        if limiter is None:
+            limiter = SlidingWindowRateLimiter(rpm, 60.0)
+            _RATE_LIMITERS[rate_key] = limiter
+        semaphore = _SEMAPHORES.get(semaphore_key)
+        if semaphore is None:
+            semaphore = threading.BoundedSemaphore(concurrency)
+            _SEMAPHORES[semaphore_key] = semaphore
+    return limiter, semaphore
 
 
 def _clean(html: str) -> str:
@@ -102,9 +132,14 @@ def search_web(query: str, top_k: int = 3) -> list[str]:
     if not _enabled():
         return []
     backend = _backend()
+    if backend == "off":
+        return []
+    limiter, semaphore = _controls(backend)
+    if not limiter.check(backend).allowed:
+        return []
+    if not semaphore.acquire(timeout=0.1):
+        return []
     try:
-        if backend == "off":
-            return []
         if backend == "bocha":
             return _search_bocha(query, top_k)
         if backend == "tavily":
@@ -112,6 +147,8 @@ def search_web(query: str, top_k: int = 3) -> list[str]:
         return _scrape_bing(query, top_k)   # 默认
     except Exception:  # noqa: BLE001 —— 联网失败不阻断生成
         return []
+    finally:
+        semaphore.release()
 
 
 _STOP_TOKENS = {"一个", "什么", "怎么", "如何", "这个", "那个", "攻略", "技巧",

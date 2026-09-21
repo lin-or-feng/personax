@@ -1,7 +1,7 @@
 [project]
 name = "personax"
-version = "2.2.0"
-description = "具备持久化工作流、可观测评测与安全门禁的本地内容 Agent"
+version = "2.3.1"
+description = "具备滑动上下文、双重限流、质量基线与安全门禁的本地内容 Agent"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0.0",

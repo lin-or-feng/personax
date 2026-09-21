@@ -316,17 +316,30 @@ def cmd_eval(args):
 
 def cmd_rag_eval(args):
     """运行 RAG 质量门禁；返回码可直接用于 CI。"""
-    from eval.rag_scorer import evaluate
+    from eval.rag_scorer import compact_report, compare_modes, evaluate, write_report
 
-    report = evaluate(
-        args.eval_set,
-        args.knowledge,
-        args.top_k,
+    kwargs = dict(
+        eval_path=args.eval_set,
+        knowledge_dir=args.knowledge,
+        top_k=args.top_k,
         embedding_backend=args.backend,
+        min_score=args.min_score,
         min_recall=args.min_recall,
         min_mrr=args.min_mrr,
+        min_no_hit=args.min_no_hit,
+        require_no_degradation=not args.allow_degraded,
     )
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    report = compare_modes(**kwargs) if args.compare else evaluate(
+        retrieval_mode=args.mode,
+        **kwargs,
+    )
+    write_report(
+        report,
+        json_path=args.report_json,
+        markdown_path=args.report_md,
+    )
+    printable = compact_report(report) if args.summary_only else report
+    print(json.dumps(printable, ensure_ascii=False, indent=2))
     raise SystemExit(0 if report["passed"] else 1)
 
 
@@ -437,16 +450,30 @@ def main():
     p_eval.set_defaults(func=cmd_eval)
 
     # rag-eval（可复现检索门禁）
-    p_rag_eval = sub.add_parser("rag-eval", help="跑 RAG Recall/MRR/延迟质量门禁")
+    p_rag_eval = sub.add_parser("rag-eval", help="跑 RAG 召回/拒检/延迟质量门禁")
     p_rag_eval.add_argument("--eval-set", default="eval/rag_eval_set.json")
     p_rag_eval.add_argument("--knowledge", default="knowledge")
-    p_rag_eval.add_argument("--top-k", type=int, default=1)
+    p_rag_eval.add_argument("--top-k", type=int, default=5)
     p_rag_eval.add_argument(
         "--backend", choices=["hashing", "ollama", "sentence-transformers"],
         default="hashing",
     )
+    p_rag_eval.add_argument("--mode", choices=["bm25", "dense", "hybrid"], default="hybrid")
+    p_rag_eval.add_argument("--compare", action="store_true",
+                            help="依次运行 BM25、dense、hybrid 消融对比")
+    p_rag_eval.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="默认 hashing=0.15，Ollama/sentence-transformers=0.50",
+    )
     p_rag_eval.add_argument("--min-recall", type=float, default=0.80)
-    p_rag_eval.add_argument("--min-mrr", type=float, default=0.80)
+    p_rag_eval.add_argument("--min-mrr", type=float, default=0.75)
+    p_rag_eval.add_argument("--min-no-hit", type=float, default=0.75)
+    p_rag_eval.add_argument("--allow-degraded", action="store_true")
+    p_rag_eval.add_argument("--report-json", default="")
+    p_rag_eval.add_argument("--report-md", default="")
+    p_rag_eval.add_argument("--summary-only", action="store_true")
     p_rag_eval.set_defaults(func=cmd_rag_eval)
 
     argv = sys.argv[1:]

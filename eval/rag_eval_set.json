@@ -1,8 +1,319 @@
 [
-  {"query": "秋招面试穿什么更正式", "expected_sources": ["秋招穿搭.md"]},
-  {"query": "考研英语真题应该怎样复习", "expected_sources": ["考研英语.md"]},
-  {"query": "租房签合同有哪些坑", "expected_sources": ["租房避坑.md"]},
-  {"query": "面试衬衫和西装怎么搭配", "expected_sources": ["秋招穿搭.md"]},
-  {"query": "背单词和阅读理解复习计划", "expected_sources": ["考研英语.md"]},
-  {"query": "看房时如何检查押金合同", "expected_sources": ["租房避坑.md"]}
+  {
+    "id": "postgraduate_english",
+    "source": "考研英语.md",
+    "category": "learning",
+    "queries": [
+      {"query": "考研英语真题应该怎样复习", "difficulty": "exact"},
+      {"query": "背单词和阅读理解怎么安排", "difficulty": "standard"},
+      {"query": "研究生英语考试如何提高分数", "difficulty": "paraphrase"},
+      {"query": "英语一复习计划和做题方法", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "autumn_recruitment_outfit",
+    "source": "秋招穿搭.md",
+    "category": "job",
+    "queries": [
+      {"query": "秋招面试穿什么更正式", "difficulty": "exact"},
+      {"query": "面试衬衫和西装怎么搭配", "difficulty": "standard"},
+      {"query": "校招见面怎样穿得专业又自然", "difficulty": "paraphrase"},
+      {"query": "应届生求职着装有哪些避雷点", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "renting",
+    "source": "租房避坑.md",
+    "category": "wuhan_life",
+    "queries": [
+      {"query": "租房签合同有哪些坑", "difficulty": "exact"},
+      {"query": "看房时如何检查押金合同", "difficulty": "standard"},
+      {"query": "毕业生第一次找房要防哪些套路", "difficulty": "paraphrase"},
+      {"query": "中介费押一付三和退租条款怎么确认", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "large_language_model",
+    "source": "public/wikipedia_zh/大型语言模型.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是大型语言模型", "difficulty": "exact"},
+      {"query": "LLM 为什么能生成自然语言", "difficulty": "standard"},
+      {"query": "参数规模很大的生成式模型是什么", "difficulty": "paraphrase"},
+      {"query": "GPT 类模型的训练数据和参数量", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "university",
+    "source": "public/wikipedia_zh/大學.md",
+    "category": "campus",
+    "queries": [
+      {"query": "大学是什么", "difficulty": "exact"},
+      {"query": "大学承担哪些教学和研究职能", "difficulty": "standard"},
+      {"query": "提供高等教育并授予学位的机构", "difficulty": "paraphrase"},
+      {"query": "现代大学制度是怎样形成的", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "higher_education",
+    "source": "public/wikipedia_zh/高等教育.md",
+    "category": "campus",
+    "queries": [
+      {"query": "高等教育包括哪些内容", "difficulty": "exact"},
+      {"query": "中学毕业后可以接受哪些教育", "difficulty": "standard"},
+      {"query": "专科本科研究生教育属于什么阶段", "difficulty": "paraphrase"},
+      {"query": "三级教育的院校类型和培养层次", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "hust",
+    "source": "public/wikipedia_zh/华中科技大学.md",
+    "category": "wuhan_campus",
+    "queries": [
+      {"query": "介绍华中科技大学", "difficulty": "exact"},
+      {"query": "华科位于武汉哪里", "difficulty": "standard"},
+      {"query": "武汉的华中大有什么历史", "difficulty": "paraphrase"},
+      {"query": "华中理工大学与同济医科大学合并后的学校", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "machine_learning",
+    "source": "public/wikipedia_zh/机器学习.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是机器学习", "difficulty": "exact"},
+      {"query": "机器学习如何从数据中改进性能", "difficulty": "standard"},
+      {"query": "不用显式编程而让计算机学习规律", "difficulty": "paraphrase"},
+      {"query": "监督学习和无监督学习属于哪个领域", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "job_search",
+    "source": "public/wikipedia_zh/求职.md",
+    "category": "job",
+    "queries": [
+      {"query": "求职是什么过程", "difficulty": "exact"},
+      {"query": "找工作通常需要哪些步骤", "difficulty": "standard"},
+      {"query": "劳动者怎样寻找就业机会", "difficulty": "paraphrase"},
+      {"query": "从职位搜索到获得录用的过程", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "postgraduate_exam",
+    "source": "public/wikipedia_zh/全国硕士研究生招生考试.md",
+    "category": "learning",
+    "queries": [
+      {"query": "全国硕士研究生招生考试是什么", "difficulty": "exact"},
+      {"query": "考研初试和复试分别是什么", "difficulty": "standard"},
+      {"query": "攻读硕士前需要参加的全国考试", "difficulty": "paraphrase"},
+      {"query": "研究生入学考试的报名与选拔制度", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "artificial_intelligence",
+    "source": "public/wikipedia_zh/人工智能.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是人工智能", "difficulty": "exact"},
+      {"query": "人工智能研究哪些能力", "difficulty": "standard"},
+      {"query": "让机器表现出人类智能的技术领域", "difficulty": "paraphrase"},
+      {"query": "感知推理学习和决策由哪门学科研究", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "social_insurance",
+    "source": "public/wikipedia_zh/社会保险.md",
+    "category": "employment_benefits",
+    "queries": [
+      {"query": "社会保险是什么", "difficulty": "exact"},
+      {"query": "社保一般包含哪些保障", "difficulty": "standard"},
+      {"query": "工作以后养老医疗失业保障怎么理解", "difficulty": "paraphrase"},
+      {"query": "劳动者遭遇风险时的社会保障制度", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "deep_learning",
+    "source": "public/wikipedia_zh/深度学习.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是深度学习", "difficulty": "exact"},
+      {"query": "深度神经网络如何学习特征", "difficulty": "standard"},
+      {"query": "使用多层网络进行表示学习的方法", "difficulty": "paraphrase"},
+      {"query": "卷积网络和循环网络属于哪类技术", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "time_management",
+    "source": "public/wikipedia_zh/时间管理.md",
+    "category": "learning",
+    "queries": [
+      {"query": "什么是时间管理", "difficulty": "exact"},
+      {"query": "如何规划任务和可用时间", "difficulty": "standard"},
+      {"query": "怎样安排优先级提高做事效率", "difficulty": "paraphrase"},
+      {"query": "目标设定计划执行和时间分配的方法", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "internship",
+    "source": "public/wikipedia_zh/实习.md",
+    "category": "job",
+    "queries": [
+      {"query": "实习是什么", "difficulty": "exact"},
+      {"query": "学生参加实习有什么作用", "difficulty": "standard"},
+      {"query": "毕业前到单位获得工作经验", "difficulty": "paraphrase"},
+      {"query": "把课堂知识放到真实岗位实践的活动", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "prompt_engineering",
+    "source": "public/wikipedia_zh/提示工程.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是提示工程", "difficulty": "exact"},
+      {"query": "怎样设计提示词改善模型输出", "difficulty": "standard"},
+      {"query": "通过指令和示例引导生成模型", "difficulty": "paraphrase"},
+      {"query": "上下文学习中的 prompt 设计技术", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "wuhan_university",
+    "source": "public/wikipedia_zh/武汉大学.md",
+    "category": "wuhan_campus",
+    "queries": [
+      {"query": "介绍武汉大学", "difficulty": "exact"},
+      {"query": "武大有什么历史", "difficulty": "standard"},
+      {"query": "珞珈山附近的综合性大学", "difficulty": "paraphrase"},
+      {"query": "国立武汉大学的发展沿革", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "optics_valley",
+    "source": "public/wikipedia_zh/武汉东湖新技术开发区.md",
+    "category": "wuhan_life",
+    "queries": [
+      {"query": "武汉东湖新技术开发区是什么", "difficulty": "exact"},
+      {"query": "中国光谷位于哪里", "difficulty": "standard"},
+      {"query": "武汉高新技术企业集中的开发区", "difficulty": "paraphrase"},
+      {"query": "光电子信息产业聚集的武汉园区", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "wust",
+    "source": "public/wikipedia_zh/武汉科技大学.md",
+    "category": "wuhan_campus",
+    "queries": [
+      {"query": "介绍武汉科技大学", "difficulty": "exact"},
+      {"query": "武汉科技大学以前叫什么", "difficulty": "standard"},
+      {"query": "武科大的办学历史", "difficulty": "paraphrase"},
+      {"query": "由武汉钢铁学院发展而来的湖北高校", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "wuhan_city",
+    "source": "public/wikipedia_zh/武汉市.md",
+    "category": "wuhan_life",
+    "queries": [
+      {"query": "介绍武汉市", "difficulty": "exact"},
+      {"query": "武汉的地理位置和城市特点", "difficulty": "standard"},
+      {"query": "长江和汉江交汇的城市", "difficulty": "paraphrase"},
+      {"query": "湖北省会及中部地区中心城市", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "information_retrieval",
+    "source": "public/wikipedia_zh/信息檢索.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是信息检索", "difficulty": "exact"},
+      {"query": "信息检索系统如何查找资料", "difficulty": "standard"},
+      {"query": "从大量文档中找到相关内容", "difficulty": "paraphrase"},
+      {"query": "查询和文档相关性排序属于什么领域", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "learning",
+    "source": "public/wikipedia_zh/学习.md",
+    "category": "learning",
+    "queries": [
+      {"query": "什么是学习", "difficulty": "exact"},
+      {"query": "学习如何改变知识和行为", "difficulty": "standard"},
+      {"query": "通过经验获得长期能力变化", "difficulty": "paraphrase"},
+      {"query": "人和动物获取新知识技能的过程", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "recruitment",
+    "source": "public/wikipedia_zh/招聘.md",
+    "category": "job",
+    "queries": [
+      {"query": "招聘是什么", "difficulty": "exact"},
+      {"query": "企业招聘员工有哪些流程", "difficulty": "standard"},
+      {"query": "组织寻找并筛选候选人的活动", "difficulty": "paraphrase"},
+      {"query": "发布职位面试候选人并录用", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "profession",
+    "source": "public/wikipedia_zh/職業.md",
+    "category": "job",
+    "queries": [
+      {"query": "职业是什么", "difficulty": "exact"},
+      {"query": "职业与工作有什么关系", "difficulty": "standard"},
+      {"query": "个人长期从事并获得报酬的活动", "difficulty": "paraphrase"},
+      {"query": "社会分工形成的专业劳动角色", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "housing_fund",
+    "source": "public/wikipedia_zh/住房公积金.md",
+    "category": "employment_benefits",
+    "queries": [
+      {"query": "住房公积金是什么", "difficulty": "exact"},
+      {"query": "单位和个人怎样缴存公积金", "difficulty": "standard"},
+      {"query": "工作后用于住房的长期储金", "difficulty": "paraphrase"},
+      {"query": "买房租房可以使用哪种住房保障资金", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "natural_language_processing",
+    "source": "public/wikipedia_zh/自然语言处理.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是自然语言处理", "difficulty": "exact"},
+      {"query": "NLP 怎样处理人类语言", "difficulty": "standard"},
+      {"query": "让计算机理解和生成人类文本", "difficulty": "paraphrase"},
+      {"query": "分词机器翻译和文本生成属于哪个领域", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "nearest_neighbor_search",
+    "source": "public/wikipedia_zh/最邻近搜索.md",
+    "category": "agent_rag",
+    "queries": [
+      {"query": "什么是最邻近搜索", "difficulty": "exact"},
+      {"query": "kNN 如何查找最近的向量", "difficulty": "standard"},
+      {"query": "在度量空间中寻找距离最小的数据点", "difficulty": "paraphrase"},
+      {"query": "向量数据库怎样进行相似项查询", "difficulty": "hard"}
+    ]
+  },
+  {
+    "id": "out_of_scope",
+    "category": "out_of_scope",
+    "answerable": false,
+    "expected_sources": [],
+    "queries": [
+      {"query": "红烧牛肉应该放多少八角", "difficulty": "negative"},
+      {"query": "钢琴和弦转位怎样练习", "difficulty": "negative"},
+      {"query": "猫咪每天需要吃多少猫粮", "difficulty": "negative"},
+      {"query": "单反相机夜景曝光参数怎么设置", "difficulty": "negative"},
+      {"query": "篮球比赛区域联防怎么训练", "difficulty": "negative"},
+      {"query": "新能源汽车冬季续航为什么下降", "difficulty": "negative"},
+      {"query": "阳台番茄叶子发黄怎么办", "difficulty": "negative"},
+      {"query": "古典吉他尼龙弦如何更换", "difficulty": "negative"},
+      {"query": "咖啡手冲水温和粉水比", "difficulty": "negative"},
+      {"query": "游泳自由泳换气动作要领", "difficulty": "negative"},
+      {"query": "机械键盘轴体怎样润滑", "difficulty": "negative"},
+      {"query": "家庭路由器怎样设置访客网络", "difficulty": "negative"}
+    ]
+  }
 ]

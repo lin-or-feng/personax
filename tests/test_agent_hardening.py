@@ -132,6 +132,37 @@ def test_dense_failure_degrades_to_bm25_rrf():
     assert pipeline.last_trace["degradation_reasons"]["dense_search"] == "RuntimeError"
 
 
+def test_document_embedding_index_failure_keeps_bm25_available(tmp_path, monkeypatch):
+    from core.rag import build_rag_from_dir
+
+    class FailingEmbedder:
+        name = "ollama:test"
+        dimension = 0
+
+        def encode(self, texts):
+            raise RuntimeError("embedding service offline")
+
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "rag.md").write_text(
+        "---\ntopic: PersonaX RAG\nkeywords: [BM25, RRF]\n---\n"
+        "PersonaX 使用 BM25 关键词检索和 RRF 融合。",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("core.rag._make_embedder", lambda backend, model: FailingEmbedder())
+
+    pipeline = build_rag_from_dir(
+        knowledge,
+        embedding_backend="ollama",
+        environment_overrides=False,
+    )
+    hits = pipeline.retrieve_hits("PersonaX BM25 RRF", top_k=1)
+
+    assert hits and hits[0].chunk.metadata["source"] == "rag.md"
+    assert pipeline.last_trace["dense_mode"] == "unavailable"
+    assert "dense_index" in pipeline.last_trace["degraded_components"]
+
+
 def test_reranker_failure_preserves_rrf_results():
     pipeline = _pipeline()
 

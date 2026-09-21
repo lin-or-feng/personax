@@ -1,10 +1,12 @@
-"""PersonaX 2.0 对话助手离线回归评测。
+"""PersonaX 对话助手离线回归评测。
 
-不调用真实 LLM，不依赖 Ollama；用于验证路由、引用、步数上限和回答完整性。
+不调用真实 LLM，不依赖 Ollama；用于验证路由、引用编号、无证据声明、
+步数上限和回答完整性。语义事实支持度需要另行使用人工集或 Judge 评测。
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from core.assistant import AssistantOrchestrator
@@ -36,20 +38,26 @@ def _offline_pipeline() -> RAGPipeline:
 
 
 def _fake_complete(prompt: str, **kwargs) -> str:
-    if "[1]" in prompt:
+    if "<untrusted_knowledge_json>" in prompt:
         return "根据本地资料，可以从职责、状态和可观测性三个方面理解 [1]。"
     return "这是一个不需要本地知识库的直接回答。"
 
 
 def run() -> dict:
     cases = json.loads(EVAL_SET.read_text(encoding="utf-8"))
-    service = AssistantOrchestrator(
-        {"rag": {"min_score": 0.0, "assistant_top_k": 3}},
-        rag_pipeline=_offline_pipeline(),
-        complete_fn=_fake_complete,
-    )
+    pipeline = _offline_pipeline()
     rows = []
     for case in cases:
+        service = AssistantOrchestrator(
+            {
+                "rag": {
+                    "min_score": float(case.get("min_score", 0.10)),
+                    "assistant_top_k": 3,
+                }
+            },
+            rag_pipeline=pipeline,
+            complete_fn=_fake_complete,
+        )
         response = service.reply(AssistantRequest(
             question=case["question"],
             use_knowledge=case["use_knowledge"],
@@ -57,30 +65,63 @@ def run() -> dict:
             max_steps=4,
         ))
         route_ok = response.route == case["expected_route"]
+        citation_numbers = [
+            int(value) for value in re.findall(r"\[(\d+)\]", response.answer)
+        ]
         citation_ok = (not case["citation_required"]) or (
-            bool(response.sources) and "[1]" in response.answer)
+            bool(response.sources) and bool(citation_numbers)
+        )
+        citation_valid = all(
+            1 <= value <= len(response.sources) for value in citation_numbers
+        )
+        expects_no_evidence = bool(case.get("expect_no_evidence", False))
+        no_evidence_ok = (not expects_no_evidence) or (
+            not response.sources
+            and "本地知识库未检索到可核验资料" in response.answer
+        )
         bounded = len(response.trace) <= 4
         answered = bool(response.answer.strip())
         rows.append({
             "id": case["id"],
             "route_ok": route_ok,
             "citation_ok": citation_ok,
+            "citation_valid": citation_valid,
+            "no_evidence_ok": no_evidence_ok,
             "bounded": bounded,
             "answered": answered,
             "route": response.route,
             "sources": len(response.sources),
+            "citations": citation_numbers,
             "steps": len(response.trace),
+            "degraded": response.degraded,
         })
     total = len(rows) or 1
+    no_evidence_rows = [
+        row for case, row in zip(cases, rows)
+        if case.get("expect_no_evidence", False)
+    ]
     summary = {
+        "schema_version": "2.3",
         "cases": len(rows),
         "route_accuracy": sum(row["route_ok"] for row in rows) / total,
         "citation_coverage": sum(row["citation_ok"] for row in rows) / total,
+        "citation_validity": sum(row["citation_valid"] for row in rows) / total,
+        "no_evidence_disclosure_rate": (
+            sum(row["no_evidence_ok"] for row in no_evidence_rows)
+            / len(no_evidence_rows)
+        ) if no_evidence_rows else 1.0,
         "bounded_step_rate": sum(row["bounded"] for row in rows) / total,
         "answer_rate": sum(row["answered"] for row in rows) / total,
         "passed": all(
             row[metric] for row in rows
-            for metric in ("route_ok", "citation_ok", "bounded", "answered")
+            for metric in (
+                "route_ok",
+                "citation_ok",
+                "citation_valid",
+                "no_evidence_ok",
+                "bounded",
+                "answered",
+            )
         ),
         "details": rows,
     }

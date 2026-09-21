@@ -11,18 +11,44 @@
                     无人值守模式需显式 auto_approve=True（定时任务）
 4. 幂等保护      —— Draft.metadata["publish_url"] 已存在则跳过，防止重复发布
 5. 失败重试      —— 指数退避重试（默认 3 次），每次失败截图存 logs/
-6. 限速          —— 可挂 Harness quota，遵守每分钟发布上限
+6. 限速          —— 滑动窗口限制频率 + Semaphore(1) 阻止进程内并发发布
 7. 选择器容错    —— 每个元素给多个候选选择器（小红书改版后自动换）
 8. 图片上传      —— 支持封面/多图（draft.metadata["images"] / ["cover"]）
 """
 from __future__ import annotations
+import functools
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
 
 from .base import Publisher
 from core.types import Draft, PublishResult
+
+
+_PUBLISH_SEMAPHORE = threading.BoundedSemaphore(1)
+
+
+def _single_flight_publish(method):
+    """同一进程只允许一个真实浏览器发布流程占用账号会话。"""
+
+    @functools.wraps(method)
+    def wrapped(self, draft: Draft, confirm=None):
+        started = time.time()
+        if not _PUBLISH_SEMAPHORE.acquire(blocking=False):
+            result = PublishResult(
+                success=False,
+                message="发布忙碌：当前已有真实发布任务，请完成后再试",
+            )
+            _record_publish("real", draft, result, started)
+            return result
+        try:
+            return method(self, draft, confirm)
+        finally:
+            _PUBLISH_SEMAPHORE.release()
+
+    return wrapped
 
 # 选择器候选表：按 XHS 创作者平台常见 DOM 写，改版后在此追加即可
 DEFAULT_SELECTORS = {
@@ -228,6 +254,7 @@ class XhsPlaywrightPublisher(Publisher):
 
     # ---------- 公共入口 ----------
 
+    @_single_flight_publish
     def publish(
         self,
         draft: Draft,

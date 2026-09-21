@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 
 from .harness import Harness
 from .prompts import load_prompts
-from .rag import build_rag_from_dir
+from .rag import build_rag_from_dir, resolve_min_score
 from .registry import route as route_skills
 from .style import StyleEnforcer
 from .types import Draft, ExecutionContext, SkillInput, SkillOutput
@@ -404,12 +404,13 @@ class LangGraphOrchestrator:
             enable_hyde=bool(rag_cfg.get("enable_hyde", False)),
             reranker=rag_cfg.get("reranker"),
             reranker_model=rag_cfg.get("reranker_model"),
+            retrieval_mode=rag_cfg.get("retrieval_mode"),
         )
         rag_chunks = (
             rag_pipe.retrieve_relevant(
                 topic,
                 top_k=int(rag_cfg.get("top_k", 2)),
-                min_score=float(rag_cfg.get("min_score", 0.10)),
+                min_score=resolve_min_score(rag_cfg, rag_pipe),
             )
             if rag_pipe.store.chunks else []
         )

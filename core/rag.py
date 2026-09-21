@@ -277,6 +277,7 @@ class VectorStore:
         self.embedder = embedder or HashingEmbedder()
         self.bm25 = BM25Index()
         self.last_dense_mode = "knn-exact"
+        self.last_index_error = ""
 
     def add(self, chunk: Chunk):
         if not chunk.embedding:
@@ -315,9 +316,17 @@ class VectorStore:
     def dense_search(self, query: str, top_k: int = 5) -> list[tuple[Chunk, float]]:
         if not self.chunks:
             return []
+        embedded_chunks = {
+            cid: chunk for cid, chunk in self.chunks.items() if chunk.embedding
+        }
+        if not embedded_chunks:
+            raise RuntimeError("dense 文档索引不可用")
         query_vector = self.embedder.encode([query])[0]
         self.last_dense_mode = "knn-exact"
-        rows = [(cid, _cosine(query_vector, c.embedding)) for cid, c in self.chunks.items()]
+        rows = [
+            (cid, _cosine(query_vector, chunk.embedding))
+            for cid, chunk in embedded_chunks.items()
+        ]
         rows.sort(key=lambda item: item[1], reverse=True)
         rows = rows[:top_k]
         return [(self.chunks[cid], score) for cid, score in rows]
@@ -331,6 +340,20 @@ def reciprocal_rank_fusion(results_list: list[list[tuple[Chunk, float]]],
         for rank, (chunk, _) in enumerate(results):
             scores[chunk.id] = scores.get(chunk.id, 0.0) + 1.0 / (k + rank + 1)
     return sorted(scores.items(), key=lambda item: item[1], reverse=True)
+
+
+def _diversify_sources(chunks: Sequence[Chunk], max_per_source: int = 2) -> list[Chunk]:
+    """限制单一文档占满候选，保留同文档最多两个互补片段。"""
+
+    counts: Counter[str] = Counter()
+    diversified: list[Chunk] = []
+    for chunk in chunks:
+        source = str((chunk.metadata or {}).get("source") or chunk.id)
+        if counts[source] >= max_per_source:
+            continue
+        counts[source] += 1
+        diversified.append(chunk)
+    return diversified
 
 
 class RuleBasedQueryEnhancer:
@@ -400,11 +423,18 @@ class RAGPipeline:
     def __init__(self, store: VectorStore | None = None,
                  enhancer: RuleBasedQueryEnhancer | None = None,
                  reranker: CrossEncoderReranker | None = None,
-                 enable_hyde: bool = False):
+                 enable_hyde: bool = False,
+                 retrieval_mode: str = "hybrid"):
         self.store = store or VectorStore()
         self.enhancer = enhancer or RuleBasedQueryEnhancer()
         self.reranker = reranker
         self.enable_hyde = enable_hyde
+        normalized_mode = retrieval_mode.lower().replace("bm25", "lexical")
+        if normalized_mode not in {"lexical", "dense", "hybrid"}:
+            raise ValueError(
+                "retrieval_mode 必须是 lexical/bm25、dense 或 hybrid"
+            )
+        self.retrieval_mode = normalized_mode
         self.last_trace: dict[str, Any] = {}
 
     def multi_query(self, query: str, n: int = 3) -> list[str]:
@@ -439,13 +469,22 @@ class RAGPipeline:
 
         result_lists: list[list[tuple[Chunk, float]]] = []
         fetch_k = max(top_k * 3, 10)
+        if (
+            self.retrieval_mode in {"dense", "hybrid"}
+            and self.store.last_index_error
+        ):
+            mark_degraded("dense_index", RuntimeError(self.store.last_index_error))
         for variant in queries:
-            result_lists.append(self.store.search(variant, fetch_k, index="raw"))
-            result_lists.append(self.store.search(variant, fetch_k, index="metadata"))
-            try:
-                result_lists.append(self.store.dense_search(variant, fetch_k))
-            except Exception as exc:  # noqa: BLE001 - embedding 故障时保留 BM25/RRF 结果
-                mark_degraded("dense_search", exc)
+            if self.retrieval_mode in {"lexical", "hybrid"}:
+                result_lists.append(self.store.search(variant, fetch_k, index="raw"))
+                result_lists.append(self.store.search(variant, fetch_k, index="metadata"))
+            if self.retrieval_mode in {"dense", "hybrid"}:
+                if self.store.last_index_error:
+                    continue
+                try:
+                    result_lists.append(self.store.dense_search(variant, fetch_k))
+                except Exception as exc:  # noqa: BLE001 - embedding 故障时保留 BM25/RRF 结果
+                    mark_degraded("dense_search", exc)
 
         fused = reciprocal_rank_fusion(result_lists)
         candidates = [self.store.chunks[cid] for cid, _ in fused[:fetch_k]]
@@ -458,9 +497,17 @@ class RAGPipeline:
                 rerank_scores = {chunk.id: score for chunk, score in reranked}
             except Exception as exc:  # noqa: BLE001 - 重排失败时继续使用 RRF 顺序
                 mark_degraded("reranker", exc)
+        candidates = _diversify_sources(candidates, max_per_source=2)
 
         query_vector: list[float] = []
-        if candidates and "dense_search" not in degraded_components:
+        if (
+            candidates
+            and self.retrieval_mode in {"dense", "hybrid"}
+            and not any(
+                component in degraded_components
+                for component in ("dense_index", "dense_search")
+            )
+        ):
             try:
                 query_vector = self.store.embedder.encode([query])[0]
             except Exception as exc:  # noqa: BLE001 - 门控仍可依赖 lexical score
@@ -479,13 +526,19 @@ class RAGPipeline:
         self.last_trace = {
             "query": query,
             "queries": queries,
+            "retrieval_mode": self.retrieval_mode,
             "embedding_backend": self.store.embedder.name,
             "dense_mode": (
-                "unavailable" if "dense_search" in degraded_components
+                "disabled" if self.retrieval_mode == "lexical"
+                else "unavailable" if any(
+                    component in degraded_components
+                    for component in ("dense_index", "dense_search")
+                )
                 else self.store.last_dense_mode
             ),
             "fusion": "rrf",
             "reranker": getattr(self.reranker, "model_name", "none"),
+            "max_chunks_per_source": 2,
             "candidates": len(candidates),
             "embedding_cache_hits": getattr(self.store.embedder, "cache_hits", 0),
             "embedding_cache_misses": getattr(self.store.embedder, "cache_misses", 0),
@@ -505,6 +558,26 @@ class RAGPipeline:
         self.last_trace["min_score"] = min_score
         self.last_trace["returned"] = len(kept[:top_k])
         return kept[:top_k]
+
+
+def resolve_min_score(config: dict[str, Any], pipeline: RAGPipeline) -> float:
+    """按 embedding 后端选择经过评测校准的相关性门槛。
+
+    cosine 分数在 hashing、Ollama 和 sentence-transformers 之间不可直接比较，
+    因此保留通用 ``min_score`` 作为回退，并允许配置后端级覆盖。
+    """
+
+    default = float(config.get("min_score", 0.10))
+    overrides = config.get("min_score_by_backend", {}) or {}
+    if not isinstance(overrides, dict):
+        overrides = {}
+    backend = str(pipeline.store.embedder.name).lower()
+    family = backend.split(":", 1)[0]
+    value = overrides.get(backend, overrides.get(family, default))
+    score = float(value)
+    if not 0.0 <= score <= 1.0:
+        raise ValueError("RAG min_score 必须在 0 到 1 之间")
+    return score
 
 
 _FRONT_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
@@ -564,6 +637,7 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
                        enable_hyde: bool | None = None,
                        reranker: str | None = None,
                        reranker_model: str | None = None,
+                       retrieval_mode: str | None = None,
                        environment_overrides: bool = True) -> RAGPipeline:
     """从 Markdown 目录构建并按文件指纹缓存混合索引。"""
     path = Path(dir_path)
@@ -576,10 +650,11 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
     hyde = (hyde_env == "1") if hyde_env is not None else bool(enable_hyde)
     reranker_name = (env("RAG_RERANKER") or reranker or "none").lower()
     rerank_model = env("RAG_RERANKER_MODEL") or reranker_model or "BAAI/bge-reranker-base"
+    mode = (env("RAG_RETRIEVAL_MODE") or retrieval_mode or "hybrid").lower()
     files = sorted(path.rglob("*.md")) if path.exists() else []
     signature = tuple((str(f.resolve()), f.stat().st_mtime_ns, f.stat().st_size) for f in files)
     cache_key = (signature, chunk_size, backend, model,
-                 enhancer_name, hyde, reranker_name, rerank_model)
+                 enhancer_name, hyde, reranker_name, rerank_model, mode)
     if cache_key in _PIPE_CACHE:
         return _PIPE_CACHE[cache_key]
 
@@ -597,7 +672,13 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
     else:
         enhancer = RuleBasedQueryEnhancer()
     cross_encoder = CrossEncoderReranker(rerank_model) if reranker_name == "cross-encoder" else None
-    pipe = RAGPipeline(store, enhancer=enhancer, reranker=cross_encoder, enable_hyde=hyde)
+    pipe = RAGPipeline(
+        store,
+        enhancer=enhancer,
+        reranker=cross_encoder,
+        enable_hyde=hyde,
+        retrieval_mode=mode,
+    )
 
     pending_chunks: list[Chunk] = []
     for file_index, file_path in enumerate(files):
@@ -621,7 +702,7 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
                 summary=topic,
                 hypothetical_questions=[f"关于{topic}有哪些经验和避坑建议"] if topic else [],
                 metadata={
-                    "source": str(file_path.relative_to(path)),
+                    "source": file_path.relative_to(path).as_posix(),
                     "topic": topic,
                     "style": str(meta.get("style") or ""),
                     "keywords": [str(item) for item in keywords],
@@ -632,6 +713,16 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
                     "chunk_index": chunk_index,
                 },
             ))
-    store.add_many(pending_chunks)
-    _PIPE_CACHE[cache_key] = pipe
+    if pipe.retrieval_mode == "lexical":
+        # BM25 消融不应因为本地 embedding 服务不可用而无法建索引。
+        store.chunks.update({chunk.id: chunk for chunk in pending_chunks})
+    else:
+        try:
+            store.add_many(pending_chunks)
+        except Exception as exc:  # noqa: BLE001 - 建索引失败时保留可用的 BM25 路径
+            store.last_index_error = f"{type(exc).__name__}: {exc}"
+            store.chunks.update({chunk.id: chunk for chunk in pending_chunks})
+    # 失败索引不进入进程级缓存；Ollama 恢复后下一次构建可自动重试 dense。
+    if not store.last_index_error:
+        _PIPE_CACHE[cache_key] = pipe
     return pipe

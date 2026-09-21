@@ -1,4 +1,4 @@
-"""PersonaX 2.2 可视化工作台（Streamlit）
+"""PersonaX 2.3.1 可视化工作台（Streamlit）
 
 启动：
     pip install streamlit
@@ -36,7 +36,12 @@ STATE_PATH = BASE / "storage_state.json"
 ASSISTANT_CHECKPOINT_PATH = BASE / "logs" / "assistant_checkpoints.sqlite3"
 LANGGRAPH_CHECKPOINT_PATH = BASE / "logs" / "langgraph_checkpoints.sqlite3"
 
-st.set_page_config(page_title="PersonaX 小红书工作台", page_icon="🍃", layout="wide")
+st.set_page_config(
+    page_title="PersonaX · Local Agent Studio",
+    page_icon=":material/hub:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
 # 触发 Skill 注册
 sys.path.insert(0, str(BASE))
@@ -217,6 +222,37 @@ def _render_generation_trace(draft) -> None:
             )
 
 
+def _page_header(title: str, description: str, *, icon: str, eyebrow: str) -> None:
+    """统一页面标题层级，避免每个页面重复堆叠 emoji 与分隔线。"""
+
+    st.caption(eyebrow.upper())
+    st.header(f":material/{icon}: {title}", anchor=False)
+    st.caption(description)
+
+
+def _workflow_stage() -> int:
+    """根据当前草稿状态推导生成流程的展示阶段。"""
+
+    if st.session_state.get("check_result"):
+        return 2
+    if st.session_state.get("draft"):
+        return 1
+    return 0
+
+
+def _render_workflow_progress() -> None:
+    labels = ["设定", "生成", "检验", "发布"]
+    icons = ["tune", "auto_awesome", "verified", "publish"]
+    current = _workflow_stage()
+    with st.container(horizontal=True, gap="small"):
+        for idx, (label, icon) in enumerate(zip(labels, icons, strict=True)):
+            st.badge(
+                f"{idx + 1} {label}",
+                icon=f":material/{icon}:",
+                color="primary" if idx == current else "gray",
+            )
+
+
 # ---------- 会话状态 ----------
 
 def init_state():
@@ -231,23 +267,54 @@ def init_state():
     s.setdefault("last_fix", None)       # 最近一次就地修改 dict(field, before, after)
     s.setdefault("assistant_messages", [])
     s.setdefault("assistant_thread_id", f"ui-{uuid.uuid4().hex[:12]}")
+    s.setdefault("assistant_memory_bootstrapped", False)
 
 
 init_state()
 
+NAV_LABELS = {
+    "generate": ":material/edit_note: 生成工作台",
+    "assistant": ":material/smart_toy: AI 助手",
+    "schedule": ":material/calendar_month: 内容与定时",
+    "knowledge": ":material/database: 知识库",
+    "settings": ":material/tune: 设置",
+    "observability": ":material/monitoring: 状态与日志",
+}
+LEGACY_NAV = {
+    "📝 生成与编辑": "generate",
+    "💬 AI 助手": "assistant",
+    "🗓️ 内容库与定时": "schedule",
+    "📚 知识库": "knowledge",
+    "⚙️ 设置": "settings",
+    "📊 状态与日志": "observability",
+}
+if st.session_state.get("nav") in LEGACY_NAV:
+    st.session_state.nav = LEGACY_NAV[st.session_state.nav]
+
 with st.sidebar:
-    st.title("🍃 PersonaX")
-    st.caption("小红书内容生成 · 检验 · 定时发布")
+    st.markdown("## :material/hub: PersonaX")
+    st.caption("Local agent studio · v2.3.1")
     page = st.radio(
         "导航",
-        ["📝 生成与编辑", "💬 AI 助手", "🗓️ 内容库与定时", "📚 知识库", "⚙️ 设置", "📊 状态与日志"],
+        list(NAV_LABELS),
+        format_func=lambda key: NAV_LABELS[key],
         label_visibility="collapsed",
         key="nav",
+        width="stretch",
     )
-    st.divider()
-    st.caption(f"内容库: `content_bank/`\n\n发布留痕: `publish_log.json`")
-    st.caption(f"登录态: {'✅ 已就绪' if STATE_PATH.exists() else '⚠️ 未登录（发布前需先登录）'}")
-    if st.button("🔁 重置当前草稿", width="stretch"):
+    st.space("small")
+    with st.container(border=True, gap="small"):
+        if STATE_PATH.exists():
+            st.badge("发布登录态已就绪", icon=":material/check_circle:", color="green")
+        else:
+            st.badge("发布前需要登录", icon=":material/info:", color="orange")
+        st.caption("内容库 `content_bank/`\n\n发布留痕 `publish_log.json`")
+    if st.button(
+        "重置当前草稿",
+        icon=":material/restart_alt:",
+        type="tertiary",
+        width="stretch",
+    ):
         st.session_state.draft = None
         st.session_state.check_result = None
         st.session_state.pub_confirm = False
@@ -257,12 +324,22 @@ with st.sidebar:
 # ============================================================
 # 页 1：生成与编辑 → 检验 → 发布
 # ============================================================
-if page == "📝 生成与编辑":
-    st.header("📝 生成 · 编辑 · 检验 · 发布")
+if page == "generate":
+    _page_header(
+        "生成工作台",
+        "从任务设定到发布检查，所有高风险动作都保留人工确认。",
+        icon="edit_note",
+        eyebrow="Create workflow",
+    )
+    _render_workflow_progress()
+    st.space("small")
 
     # ---- 模型后端 + 模型切换（默认本地 Ollama，免费） ----
     from core.llm import _backend, _ollama_reachable
-    be1, be2, be3 = st.columns([2, 2, 1])
+    task_panel = st.container(border=True)
+    task_panel.subheader(":material/tune: 本次任务", anchor=False)
+    task_panel.caption("选择模型、编排方式和写作人格；这些设置只影响本次生成。")
+    be1, be2, be3 = task_panel.columns([2, 2, 1])
     default_be = "ollama（本地免费）" if _backend() == "ollama" else "deepseek（云端）"
     backend_ch = be1.selectbox(
         "模型后端",
@@ -280,7 +357,7 @@ if page == "📝 生成与编辑":
         backend_key = "offline"
     gen_model = be2.selectbox("模型", model_choices)
     gen_temp = be3.slider("温度", 0.0, 1.5, 0.8, 0.1)
-    engine_label = st.segmented_control(
+    engine_label = task_panel.segmented_control(
         "编排引擎",
         ["Python（默认）", "LangGraph（状态图）"],
         default="Python（默认）",
@@ -289,15 +366,20 @@ if page == "📝 生成与编辑":
     )
     generation_engine = "langgraph" if engine_label.startswith("LangGraph") else "python"
     from core.websearch import _enabled as ws_enabled
-    st.caption(f"🌐 联网：{'✅ 开' if ws_enabled() else '⏸ 关'}（⚙️ 设置页可切换）　"
-               f"🎨 封面：发布时自动生成")
+    task_panel.caption(
+        f"联网增强：{'已开启' if ws_enabled() else '已关闭'}（可在设置页切换） · "
+        "无配图时发布前自动生成封面"
+    )
 
     # 未配 Key 时给清晰提示（而不是报错）
     if backend_key == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
-        st.warning("⚠️ 未检测到 DEEPSEEK_API_KEY：请在项目根目录 `.env` 填写 Key，"
-                   "或改选「ollama（本地免费）」后端（不用 Key、不花钱）。")
+        task_panel.warning(
+            "未检测到 DEEPSEEK_API_KEY：请在项目根目录 `.env` 填写 Key，"
+            "或改选本地 Ollama。",
+            icon=":material/key_off:",
+        )
 
-    c1, c2 = st.columns([3, 1])
+    c1, c2 = task_panel.columns([3, 1])
     topic = c1.text_input("笔记主题", st.session_state.topic,
                           placeholder="请输入笔记主题，如：秋招穿搭")
     from core.persona import list_personas, suggest_persona
@@ -306,7 +388,7 @@ if page == "📝 生成与编辑":
 
     # ---- 自动推荐人格：主题变了自动选推荐，可手动切换回来 ----
     st.session_state.setdefault("auto_persona", True)
-    auto_on = c1.checkbox("✨ 自动按主题推荐人格", key="auto_persona",
+    auto_on = c1.checkbox("自动按主题推荐人格", key="auto_persona",
                           help="勾选：改主题自动选推荐人格；取消或手动选＝用你选的")
     sel_key = "persona_choice"
     st.session_state.setdefault(sel_key, "默认(persona.yaml)")
@@ -315,7 +397,7 @@ if page == "📝 生成与编辑":
         st.session_state[sel_key] = rec_persona or "默认(persona.yaml)"
         st.session_state.last_topic = topic
 
-    bp1, bp2 = st.columns([3, 1])
+    bp1, bp2 = task_panel.columns([3, 1])
 
     def _apply_recommended():
         # 回调在组件实例化前执行，允许修改 selectbox 的 session state
@@ -324,17 +406,22 @@ if page == "📝 生成与编辑":
 
     gen_persona = bp1.selectbox("人格（可手动切换）", persona_names, key=sel_key,
                                 help="选哪个就用哪个语气生成；可到「⚙️ 设置 → 人设库」创建/编辑人格")
-    bp2.button("↩️ 回到推荐", width="stretch", on_click=_apply_recommended,
+    bp2.button("回到推荐", icon=":material/replay:", width="stretch", on_click=_apply_recommended,
                disabled=not rec_persona or rec_persona == gen_persona)
     if rec_persona and gen_persona == rec_persona:
-        st.caption(f"💡 已自动选择推荐人格：**{rec_persona}**（想换就手动选，或点「↩️ 回到推荐」）")
+        task_panel.caption(f"已自动选择推荐人格：**{rec_persona}**。你仍可以手动切换。")
     elif rec_persona:
-        st.caption(f"💡 推荐人格：**{rec_persona}**（你当前手动选择了 {gen_persona}）")
+        task_panel.caption(f"推荐人格：**{rec_persona}**；当前手动选择：{gen_persona}。")
     st.session_state.topic = topic
 
-    if st.button("✨ 生成发布内容", type="primary", width="stretch"):
+    if task_panel.button(
+        "生成发布内容",
+        icon=":material/auto_awesome:",
+        type="primary",
+        width="stretch",
+    ):
         if not (topic or "").strip():
-            st.warning("⚠️ 请先输入笔记主题（如：秋招穿搭）")
+            task_panel.warning("请先输入笔记主题，例如：秋招穿搭。", icon=":material/edit:")
         else:
             llm_configure(backend=backend_key,
                           model=None if backend_key == "offline" else gen_model,
@@ -353,29 +440,32 @@ if page == "📝 生成与编辑":
                 except Exception as e:  # noqa: BLE001
                     st.error(f"生成失败: {e}")
 
-    st.divider()
+    st.space("medium")
 
     draft = st.session_state.draft
     if draft is None:
-        st.info("👆 先点「✨ 生成发布内容」，或到「🗓️ 内容库与定时」选稿编辑。")
+        st.info(
+            "在上方完成任务设定并生成内容，或从“内容与定时”载入已有稿件。",
+            icon=":material/lightbulb:",
+        )
     else:
         _render_generation_trace(draft)
-        st.subheader("✏️ 编辑内容")
+        st.subheader(":material/edit: 内容编辑与预览", anchor=False)
         ts = st.session_state.gen_ts
         col_a, col_b = st.columns([2, 1])
-        with col_a:
+        with col_a.container(border=True):
             title = st.text_input("标题（≤20 字，含 emoji 更吸睛）", draft.title or "", key=f"e_title_{ts}")
             body = st.text_area("正文（短句分段，结尾互动引导）", draft.body or "",
                                 height=260, key=f"e_body_{ts}")
-        with col_b:
+        with col_b.container(border=True):
             tags = st.text_input("标签（空格分隔）", fmt_tags(draft.tags), key=f"e_tags_{ts}")
             cover_text = st.text_input("封面文案（可选）", draft.cover_text or "", key=f"e_cover_{ts}")
             images = st.text_input("配图路径（逗号分隔，可选）",
                                    " ".join((draft.metadata or {}).get("images", [])), key=f"e_images_{ts}")
-            preview = st.text_area("👀 预览", f"{title}\n\n{body}\n\n{fmt_tags(parse_tags(tags))}",
+            preview = st.text_area("发布预览", f"{title}\n\n{body}\n\n{fmt_tags(parse_tags(tags))}",
                                    height=200, disabled=True)
 
-        if st.button("💾 应用编辑", width="stretch"):
+        if st.button("应用编辑", icon=":material/save:", width="stretch"):
             draft.title = title
             draft.body = body
             draft.tags = parse_tags(tags)
@@ -387,11 +477,12 @@ if page == "📝 生成与编辑":
             st.success("已应用编辑，可继续「检验」")
 
         # ---- 封面生成（多模态 · 描述驱动） ----
-        cover_desc = st.text_input("🎨 封面描述（可选，按你的描述生成）",
+        cover_desc = st.text_input("封面描述（可选，按你的描述生成）",
                                    (st.session_state.draft.metadata or {}).get("cover_desc", "")
                                    if st.session_state.draft else "",
-                                   placeholder="如：粉色渐变 可爱风 / 深色高级感 金色线条 / 简约留白 黑白")
-        if st.button("🎨 按描述生成封面", type="secondary", width="stretch",
+                                   placeholder="如：粉色渐变 可爱风 / 深色高级感 金色线条 / 简约留白 黑白",
+                                   icon=":material/palette:")
+        if st.button("按描述生成封面", icon=":material/image:", type="secondary", width="stretch",
                      help="填写描述后点此生成；不填则用当前风格自动生成"):
             from core.covergen import ensure_cover_for_draft
             draft = st.session_state.draft
@@ -409,11 +500,15 @@ if page == "📝 生成与编辑":
         if st.session_state.get("cover_preview"):
             st.image(st.session_state.cover_preview, caption="当前封面预览（发布自动上传）", width=300)
 
-        st.divider()
+        st.space("medium")
 
         ck1, ck2, ck3 = st.columns(3)
         # ---- 检验 ----
-        if ck1.button("🔍 检验（合规+风格+就绪）", width="stretch"):
+        if ck1.button(
+            "检验（合规 + 风格 + 就绪）",
+            icon=":material/fact_check:",
+            width="stretch",
+        ):
             draft = st.session_state.draft
             comp = compliance().check_draft(draft)
             style = StyleEnforcer(load_persona()).enforce(draft)
@@ -437,7 +532,7 @@ if page == "📝 生成与编辑":
                     with hc1:
                         st.warning(f"  - {h}")
                     with hc2:
-                        if st.button("📍 定位", key=f"jump_{idx}",
+                        if st.button("定位", icon=":material/my_location:", key=f"jump_{idx}",
                                      help=f"就地展开{field_name or '对应'}编辑框",
                                      disabled=not h.field):
                             st.session_state.jump_target = {
@@ -472,7 +567,7 @@ if page == "📝 生成与编辑":
                         height=160 if fld == "body" else 80,
                     )
                     b1, b2, b3 = st.columns([1, 1, 3])
-                    if b1.button("💾 保存修改", key=f"save_fix_{fld}_{jump.get('hit_idx', 0)}",
+                    if b1.button("保存修改", icon=":material/save:", key=f"save_fix_{fld}_{jump.get('hit_idx', 0)}",
                                  type="primary"):
                         d = st.session_state.draft
                         before = cur_text
@@ -529,12 +624,12 @@ if page == "📝 生成与编辑":
             "调试：失败时保留浏览器", value=True, disabled=not headed_mode,
             help="仅有头模式有效。发布失败时不自动关闭窗口，关闭窗口后才返回结果。",
         )
-        if pub_c2.button("🧪 干跑发布（不真发）", width="stretch"):
+        if pub_c2.button("干跑发布（不真发）", icon=":material/science:", width="stretch"):
             draft = st.session_state.draft
             r = DryRunPublisher().publish(draft)
             st.info(f"{r.message}（{r.cost_ms}ms）")
 
-        if pub_c3.button("🚀 真实发布", width="stretch", type="primary",
+        if pub_c3.button("真实发布", icon=":material/rocket_launch:", width="stretch", type="primary",
                           disabled=not STATE_PATH.exists() or not can_real_publish):
             if not st.session_state.pub_confirm:
                 st.session_state.pub_confirm = True
@@ -568,7 +663,7 @@ if page == "📝 生成与编辑":
                 st.session_state.pub_confirm = False
 
         # 核对已发布笔记（调用 notes 命令，界面直接看结果）
-        if st.button("🗂️ 核对已发布笔记", width="stretch"):
+        if st.button("核对已发布笔记", icon=":material/inventory_2:", width="stretch"):
             with st.spinner("打开笔记管理核对…"):
                 notes_args = [sys.executable, "main.py", "notes"]
                 if browser_ch != "chromium":
@@ -584,15 +679,26 @@ if page == "📝 生成与编辑":
 # ============================================================
 # 页 2：AI 助手
 # ============================================================
-elif page == "💬 AI 助手":
-    st.header("💬 PersonaX AI 助手")
-    st.caption("按需检索本地知识库，回答附来源与执行轨迹。助手没有发布权限，不会触发真实发布。")
+elif page == "assistant":
+    _page_header(
+        "AI 助手",
+        "按需检索本地知识库，回答附来源与执行轨迹；助手没有发布权限。",
+        icon="smart_toy",
+        eyebrow="Read-only assistant",
+    )
 
-    from core.assistant import AssistantCheckpointStore, AssistantOrchestrator, get_session_harness
+    from core.assistant import (
+        AssistantCheckpointStore,
+        AssistantMemoryStore,
+        AssistantOrchestrator,
+        get_session_harness,
+    )
     from core.llm import _backend, _ollama_reachable
     from core.types import AssistantRequest, ChatMessage
 
-    a1, a2, a3 = st.columns([2, 2, 1])
+    assistant_config = st.container(border=True)
+    assistant_config.subheader(":material/tune: 对话设置", anchor=False)
+    a1, a2, a3, a4 = assistant_config.columns([2, 2, 1, 1])
     backend_labels = ["ollama（本地）", "deepseek（云端）", "offline（离线模板）"]
     current_backend = _backend()
     backend_index = {"ollama": 0, "deepseek": 1, "offline": 2}.get(current_backend, 0)
@@ -606,7 +712,13 @@ elif page == "💬 AI 助手":
     else:
         assistant_models = ["离线模板"]
     assistant_model = a2.selectbox("模型", assistant_models, key="assistant_model")
-    use_knowledge = a3.checkbox("本地知识库", value=True, key="assistant_use_kb")
+    use_knowledge = a3.checkbox(
+        "本地知识库", value=True, key="assistant_use_kb", persist_state="session"
+    )
+    use_memory = a4.checkbox(
+        "对话记忆", value=True, key="assistant_use_memory", persist_state="session",
+        help="恢复最近会话，并把你主动保存的长期记忆加入上下文。",
+    )
     llm_configure(
         backend=assistant_backend,
         model=None if assistant_backend == "offline" else assistant_model,
@@ -615,33 +727,119 @@ elif page == "💬 AI 助手":
     )
 
     if assistant_backend == "ollama":
-        st.caption(f"Ollama：{'✅ 已连接' if _ollama_reachable() else '❌ 未连接'} · 对话最多 4 步 · 最近 8 条消息进入上下文")
+        assistant_config.caption(
+            f"Ollama：{'已连接' if _ollama_reachable() else '未连接'} · "
+            "对话最多 4 步 · 最近 8 条消息进入上下文"
+        )
     elif assistant_backend == "deepseek" and not os.getenv("DEEPSEEK_API_KEY"):
-        st.warning("未配置 DEEPSEEK_API_KEY；请选择本地 Ollama，或在 `.env` 中配置 Key。")
+        assistant_config.warning(
+            "未配置 DEEPSEEK_API_KEY；请选择本地 Ollama，或在 `.env` 中配置 Key。",
+            icon=":material/key_off:",
+        )
 
-    clear_col, info_col = st.columns([1, 4])
-    if clear_col.button("🧹 清空对话", width="stretch"):
-        AssistantCheckpointStore(ASSISTANT_CHECKPOINT_PATH).delete(
-            st.session_state.assistant_thread_id)
+    checkpoint_store = AssistantCheckpointStore(ASSISTANT_CHECKPOINT_PATH)
+    memory_store = AssistantMemoryStore(ASSISTANT_CHECKPOINT_PATH)
+    memory_user_id = "local_user"
+
+    if use_memory and not st.session_state.assistant_memory_bootstrapped:
+        latest_threads = checkpoint_store.list_threads(limit=1)
+        if latest_threads:
+            restored_thread = latest_threads[0].thread_id
+            restored_messages = checkpoint_store.load(restored_thread)
+            st.session_state.assistant_thread_id = restored_thread
+            st.session_state.assistant_messages = [
+                message.model_dump() for message in restored_messages
+            ]
+        st.session_state.assistant_memory_bootstrapped = True
+
+    saved_memories = memory_store.list(memory_user_id, limit=8) if use_memory else []
+    controls = st.container(horizontal=True, gap="small", vertical_alignment="center")
+    if controls.button("新建会话", icon=":material/add_comment:"):
         st.session_state.assistant_messages = []
         st.session_state.assistant_thread_id = f"ui-{uuid.uuid4().hex[:12]}"
         st.rerun()
-    info_col.caption(f"会话：`{st.session_state.assistant_thread_id}` · Checkpoint 仅保存在本机 D 盘项目目录")
+    if controls.button("清空当前", icon=":material/delete_sweep:"):
+        checkpoint_store.delete(st.session_state.assistant_thread_id)
+        st.session_state.assistant_messages = []
+        st.session_state.assistant_thread_id = f"ui-{uuid.uuid4().hex[:12]}"
+        st.rerun()
+
+    history_popover = controls.popover("历史会话", icon=":material/history:")
+    with history_popover:
+        thread_summaries = checkpoint_store.list_threads(limit=12)
+        if not thread_summaries:
+            st.caption("还没有可恢复的历史会话。")
+        for summary in thread_summaries:
+            stamp = datetime.fromtimestamp(summary.updated_at).strftime("%m-%d %H:%M")
+            if st.button(
+                f"{stamp} · {summary.preview or '空会话'}",
+                key=f"resume_{summary.thread_id}",
+                width="stretch",
+            ):
+                st.session_state.assistant_thread_id = summary.thread_id
+                st.session_state.assistant_messages = [
+                    message.model_dump() for message in checkpoint_store.load(summary.thread_id)
+                ]
+                st.rerun()
+
+    memory_popover = controls.popover(
+        f"长期记忆 {len(saved_memories)}", icon=":material/psychology:"
+    )
+    with memory_popover:
+        st.caption("只保存你主动确认的偏好或背景；不会自动提取聊天隐私。")
+        memory_text = st.text_input(
+            "新增记忆",
+            placeholder="例如：我正在准备武汉地区的 Agent 岗秋招",
+            max_chars=500,
+            key="assistant_memory_input",
+        )
+        if st.button("保存记忆", icon=":material/save:", type="primary"):
+            try:
+                memory_store.add(memory_user_id, memory_text)
+                st.rerun()
+            except ValueError as exc:
+                st.warning(str(exc))
+        for memory in saved_memories:
+            row = st.container(horizontal=True, vertical_alignment="center")
+            row.caption(memory.content)
+            if row.button(
+                "删除", icon=":material/delete:",
+                key=f"delete_memory_{memory.memory_id}",
+            ):
+                memory_store.delete(memory_user_id, memory.memory_id)
+                st.rerun()
+
+    controls.caption(
+        f"会话 `{st.session_state.assistant_thread_id}` · "
+        f"最近 8 条消息 + {len(saved_memories)} 条长期记忆"
+        if use_memory else
+        f"会话 `{st.session_state.assistant_thread_id}` · 本轮不读写记忆"
+    )
 
     if not st.session_state.assistant_messages:
-        st.info("可以问项目架构、RAG 检索、内容优化或使用方法。先从下面任选一个问题开始。")
+        st.info(
+            "可以问项目架构、RAG 检索、内容优化或使用方法。先从下面任选一个问题开始。",
+            icon=":material/lightbulb:",
+        )
 
     suggested_prompt = None
-    q1, q2, q3 = st.columns(3)
-    if q1.button("解释 PersonaX 2.2 架构", width="stretch"):
-        suggested_prompt = "请解释 PersonaX 2.2 的持久化工作流、AI 助手架构和一次对话的执行流程。"
-    if q2.button("分析 RAG 检索链路", width="stretch"):
-        suggested_prompt = "项目里的 BM25、dense kNN、RRF 和相关性门控分别解决什么问题？"
-    if q3.button("给项目优化建议", width="stretch"):
-        suggested_prompt = "结合当前 PersonaX 项目，给我 3 条优先级最高、可验证的优化建议。"
+    if not st.session_state.assistant_messages:
+        suggestion = st.pills(
+            "快捷问题",
+            ["解读 PersonaX 2.3.1 架构", "分析 RAG 检索链路", "给项目优化建议"],
+            key="assistant_suggestion",
+            width="stretch",
+        )
+        suggestion_map = {
+            "解读 PersonaX 2.3.1 架构": "请解释 PersonaX 2.3.1 的滑动窗口、双重限流、持久化工作流和一次对话的执行流程。",
+            "分析 RAG 检索链路": "项目里的 BM25、dense kNN、RRF 和相关性门控分别解决什么问题？",
+            "给项目优化建议": "结合当前 PersonaX 项目，给我 3 条优先级最高、可验证的优化建议。",
+        }
+        suggested_prompt = suggestion_map.get(suggestion)
 
     for message in st.session_state.assistant_messages:
-        with st.chat_message(message["role"]):
+        avatar = ":material/person:" if message["role"] == "user" else ":material/smart_toy:"
+        with st.chat_message(message["role"], avatar=avatar):
             st.markdown(message["content"])
             if message["role"] == "assistant":
                 _render_assistant_meta(message)
@@ -649,7 +847,7 @@ elif page == "💬 AI 助手":
     typed_prompt = st.chat_input(
         "输入问题，Enter 发送（不会自动发布内容）",
         max_chars=2_000,
-        submit_mode="disable",
+        submit_mode="stop",
     )
     prompt = suggested_prompt or typed_prompt
     if prompt:
@@ -659,7 +857,7 @@ elif page == "💬 AI 助手":
         ]
         user_message = {"role": "user", "content": prompt}
         st.session_state.assistant_messages.append(user_message)
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=":material/person:"):
             st.markdown(prompt)
 
         persona = load_persona()
@@ -667,18 +865,29 @@ elif page == "💬 AI 助手":
         service = AssistantOrchestrator(
             persona,
             harness=harness,
-            checkpoint_store=AssistantCheckpointStore(ASSISTANT_CHECKPOINT_PATH),
+            checkpoint_store=checkpoint_store if use_memory else None,
             prompt_path=BASE / "config" / "assistant_prompts.yaml",
         )
-        with st.chat_message("assistant"):
-            with st.spinner("Supervisor 正在规划并回答…"):
-                response = service.reply(AssistantRequest(
-                    question=prompt,
-                    history=history,
-                    thread_id=st.session_state.assistant_thread_id,
-                    use_knowledge=use_knowledge,
-                    max_steps=4,
-                ))
+        with st.chat_message("assistant", avatar=":material/smart_toy:"):
+            status = st.status(
+                "Agent 正在检索、规划并流式回答…", expanded=False, type="compact"
+            )
+            response_stream = service.reply_stream(AssistantRequest(
+                question=prompt,
+                history=history,
+                memories=[memory.content for memory in saved_memories],
+                thread_id=st.session_state.assistant_thread_id,
+                use_knowledge=use_knowledge,
+                max_steps=4,
+            ))
+            st.write_stream(response_stream)
+            response = response_stream.response
+            if response is None:
+                raise RuntimeError("回答流未正常结束")
+            status.update(
+                label="回答已生成" + ("，记忆已保存" if use_memory else ""),
+                state="complete",
+            )
             assistant_message = {
                 "role": "assistant",
                 "content": response.answer,
@@ -687,7 +896,6 @@ elif page == "💬 AI 助手":
                 "route": response.route,
                 "checkpoint_id": response.checkpoint_id,
             }
-            st.markdown(response.answer)
             _render_assistant_meta(assistant_message)
         st.session_state.assistant_messages.append(assistant_message)
 
@@ -695,14 +903,19 @@ elif page == "💬 AI 助手":
 # ============================================================
 # 页 3：内容库与定时
 # ============================================================
-elif page == "🗓️ 内容库与定时":
-    st.header("🗓️ 内容库 · 定时发布")
+elif page == "schedule":
+    _page_header(
+        "内容库与定时",
+        "集中管理草稿、计划时间与发布留痕。真实发布仍受安全锁控制。",
+        icon="calendar_month",
+        eyebrow="Content operations",
+    )
 
     bank = ContentBank(str(BANK_DIR))
     log = PublishLog(path=str(LOG_PATH)).load()
     items = bank.list_items()
 
-    st.subheader("📦 新建定时稿件")
+    st.subheader(":material/add_task: 新建定时稿件", anchor=False)
     with st.form("new_draft", clear_on_submit=True):
         f1, f2, f3 = st.columns([2, 2, 1])
         n_topic = f1.text_input("主题", "秋招穿搭")
@@ -711,7 +924,9 @@ elif page == "🗓️ 内容库与定时":
         n_body = st.text_area("正文（可留空，发布时自动生成）", height=120)
         n_tags = st.text_input("标签（空格分隔，可留空）")
         n_img = st.text_input("配图路径（逗号分隔，可选）")
-        submitted = st.form_submit_button("💾 存入内容库（定时）")
+        submitted = st.form_submit_button(
+            "存入内容库（定时）", icon=":material/save:", type="primary"
+        )
     if submitted:
         BANK_DIR.mkdir(parents=True, exist_ok=True)
         fid = f"auto-{datetime.now():%Y%m%d-%H%M%S}"
@@ -727,8 +942,8 @@ elif page == "🗓️ 内容库与定时":
         st.success(f"已存入内容库，将于 {payload['scheduled_at']} 到期")
         st.rerun()
 
-    st.divider()
-    st.subheader(f"📚 内容库稿件（{len(items)} 篇）")
+    st.space("medium")
+    st.subheader(f":material/folder_open: 内容库稿件（{len(items)} 篇）", anchor=False)
 
     now = datetime.now()
     for it in items:
@@ -744,28 +959,28 @@ elif page == "🗓️ 内容库与定时":
             if rec:
                 st.caption(f"留痕: {rec}")
             b1, b2, b3 = st.columns(3)
-            if b1.button("✏️ 载入编辑", key=f"load_{it.id}"):
+            if b1.button("载入编辑", icon=":material/edit:", key=f"load_{it.id}"):
                 st.session_state.draft = it.to_draft()
                 st.session_state.check_result = None
                 st.session_state.pub_confirm = False
                 st.session_state.gen_ts += 1
-                st.session_state.nav = "📝 生成与编辑"
+                st.session_state.nav = "generate"
                 st.rerun()
-            if b2.button("🧪 干跑发布", key=f"dry_{it.id}"):
+            if b2.button("干跑发布", icon=":material/science:", key=f"dry_{it.id}"):
                 draft = it.to_draft()
                 if not (draft.title and draft.body):
                     orch, _ = build_orch()
                     draft = orch.run(topic=it.topic, user_id="web_user")
                 r = DryRunPublisher().publish(draft)
                 st.info(r.message)
-            if b3.button("🗑️ 删除", key=f"del_{it.id}"):
+            if b3.button("删除", icon=":material/delete:", key=f"del_{it.id}"):
                 Path(it.path).unlink(missing_ok=True)
                 st.rerun()
 
-    st.divider()
-    st.subheader("⏰ 执行定时任务")
+    st.space("medium")
+    st.subheader(":material/schedule: 执行定时任务", anchor=False)
     e1, e2 = st.columns(2)
-    if e1.button("▶️ 执行到期任务（干跑）", width="stretch"):
+    if e1.button("执行到期任务（干跑）", icon=":material/play_arrow:", width="stretch"):
         orch, persona = build_orch()
         sched = PublishScheduler(orchestrator=orch, publisher=DryRunPublisher(),
                                  compliance=compliance(), bank=bank,
@@ -776,7 +991,7 @@ elif page == "🗓️ 内容库与定时":
         for r in report:
             st.write(f"`[{r['id']}]` {r['topic']} → **{r['status']}**：{r.get('reason', r.get('url', ''))}")
         st.rerun()
-    if e2.button("🚀 执行到期任务（真实发布，需已登录）", width="stretch",
+    if e2.button("执行到期任务（真实发布，需已登录）", icon=":material/rocket_launch:", width="stretch",
                   disabled=not STATE_PATH.exists() or not real_publish_enabled()):
         orch, persona = build_orch()
         pub = XhsPlaywrightPublisher(storage_state=str(STATE_PATH), headless=True,
@@ -796,9 +1011,13 @@ elif page == "🗓️ 内容库与定时":
 # ============================================================
 # 页 4：知识库（喂优质范例 → 让生成更自然）
 # ============================================================
-elif page == "📚 知识库":
-    st.header("📚 知识库（喂优质范例 · 让生成更自然）")
-    st.caption("把「你觉得好的笔记」喂进来，生成时自动召回作范例参考。格式会自动加 front-matter。")
+elif page == "knowledge":
+    _page_header(
+        "知识库",
+        "管理写作范例与可溯源公开参考，检索时保留来源、主题和角色信息。",
+        icon="database",
+        eyebrow="Retrieval knowledge",
+    )
 
     KNOWLEDGE_DIR = BASE / "knowledge"
     KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -810,7 +1029,7 @@ elif page == "📚 知识库":
         kb_kw = k3.text_input("关键词（逗号分隔）", "面试, 穿搭, 秋招")
         kb_body = st.text_area("范例正文（粘贴你满意的笔记，体现结构/语气/互动）", height=280,
                                placeholder="家人们谁懂啊，……\n\n第一，……\n第二，……\n\n你们……评论区聊聊～")
-        kb_submit = st.form_submit_button("💾 存入知识库", type="primary")
+        kb_submit = st.form_submit_button("存入知识库", icon=":material/save:", type="primary")
     if kb_submit:
         if not kb_topic.strip() or not kb_body.strip():
             st.warning("主题和范例正文必填")
@@ -824,8 +1043,8 @@ elif page == "📚 知识库":
             st.success(f"已存入知识库：knowledge/{fname}")
             st.rerun()
 
-    st.divider()
-    st.subheader("📚 现有知识库")
+    st.space("medium")
+    st.subheader(":material/library_books: 现有知识库", anchor=False)
     kb_files = sorted(KNOWLEDGE_DIR.rglob("*.md"))
     if not kb_files:
         st.info("知识库为空，先在上面粘贴一篇进去")
@@ -853,9 +1072,9 @@ elif page == "📚 知识库":
         if details.open:
             with details:
                 if metadata.get("source_url"):
-                    st.link_button("打开原始来源", str(metadata["source_url"]))
+                    st.link_button("打开原始来源", str(metadata["source_url"]), icon=":material/open_in_new:")
                 st.text(content)
-        if c2.button("🗑️ 删除", key=f"kbdel_{item_key}", width="stretch"):
+        if c2.button("删除", icon=":material/delete:", key=f"kbdel_{item_key}", width="stretch"):
             f.unlink(missing_ok=True)
             st.rerun()
 
@@ -863,11 +1082,17 @@ elif page == "📚 知识库":
 # ============================================================
 # 页 5：设置（内容格式 / 人格 / 合规词表）
 # ============================================================
-elif page == "⚙️ 设置":
-    st.header("⚙️ 设置：发布内容格式 · 人格 · 合规")
+elif page == "settings":
+    _page_header(
+        "设置",
+        "管理人格、联网增强、封面生成与合规词表。高级配置保持本地可审计。",
+        icon="tune",
+        eyebrow="Workspace settings",
+    )
 
     # ---------- 人设库（多人格） ----------
-    st.subheader("🎭 人设库（多人格，生成时按所选人格写）")
+    st.subheader(":material/groups: 人设库", anchor=False)
+    st.caption("生成时按所选人格控制语气、习惯与禁用表达。")
     from core.persona import list_personas, get_persona, add_persona, _load_yaml
     PERSONAS_PATH = str(BASE / "config" / "personas.yaml")
     names = list_personas()
@@ -879,7 +1104,7 @@ elif page == "⚙️ 设置":
             "人格定义（YAML，字段：name/tone/habits/forbidden/sentence_length/可选 generation）",
             "name: 职场干货君\ntone: professional_warm\nhabits:\n  - 开头给结论\n  - 分点讲\nforbidden:\n  - 绝对化用语\nsentence_length: medium",
             height=260, key="np_yaml")
-        if st.button("💾 新增人格", type="primary"):
+        if st.button("新增人格", icon=":material/person_add:", type="primary"):
             try:
                 import yaml as _y
                 data = _y.safe_load(new_persona_yaml)
@@ -898,7 +1123,7 @@ elif page == "⚙️ 设置":
                                  _y.safe_dump(p, allow_unicode=True, sort_keys=False),
                                  height=320, key=f"editp_{sel_name}")
         bc1, bc2 = st.columns(2)
-        if bc1.button("💾 保存修改"):
+        if bc1.button("保存修改", icon=":material/save:"):
             try:
                 data = _y.safe_load(edit_yaml)
                 add_persona(sel_name, data)
@@ -906,7 +1131,7 @@ elif page == "⚙️ 设置":
                 st.rerun()
             except Exception as e:  # noqa: BLE001
                 st.error(f"YAML 解析失败: {e}")
-        if bc2.button("🗑️ 删除人格"):
+        if bc2.button("删除人格", icon=":material/person_remove:"):
             data = _load_yaml(PERSONAS_PATH)
             data.pop(sel_name, None)
             with open(PERSONAS_PATH, "w", encoding="utf-8") as f:
@@ -914,8 +1139,9 @@ elif page == "⚙️ 设置":
             st.success(f"已删除人格「{sel_name}」")
             st.rerun()
 
-    st.divider()
-    st.subheader("🎭 人格模板（一键套用当前默认 persona.yaml）")
+    st.space("medium")
+    st.subheader(":material/style: 人格模板", anchor=False)
+    st.caption("将模板一键套用到当前默认 persona.yaml。")
     presets = {
         "温暖闺蜜风（默认）": {"name": "小鹿学姐", "tone": "warm_girly",
                              "habits": ["每3句一个emoji", "结尾常用\"冲鸭/绝绝子/家人们\"", "善用\"谁懂啊\"", "短句优先，口语化"],
@@ -931,16 +1157,17 @@ elif page == "⚙️ 设置":
                       "forbidden": ["广告硬广"], "sentence_length": "medium"},
     }
     preset_name = st.selectbox("选择模板", list(presets.keys()))
-    if st.button("🎨 套用模板到 persona.yaml"):
+    if st.button("套用模板到 persona.yaml", icon=":material/palette:"):
         data = load_persona()
         data.update(presets[preset_name])
         save_persona(data)
         st.success(f"已套用「{preset_name}」，可在下方微调")
 
-    st.divider()
+    st.space("medium")
 
     # ---------- 联网增强开关 ----------
-    st.subheader("🌐 联网增强（生成前抓热点/参考）")
+    st.subheader(":material/public: 联网增强", anchor=False)
+    st.caption("生成前获取热点和参考资料；搜不到内容时自动跳过。")
     from core.websearch import configure as ws_configure, _enabled as ws_enabled, _backend as ws_backend
     st.session_state.setdefault("ws_on", ws_enabled())
     st.session_state.setdefault("ws_be", ws_backend() if ws_backend() in ("bing", "bocha", "tavily") else "bing")
@@ -954,10 +1181,10 @@ elif page == "⚙️ 设置":
     ws_configure(enabled=ws_on, backend=ws_be)
     st.caption(f"当前：{'✅ 已开启（' + ws_be + '）' if ws_on else '⏸ 已关闭'} —— 生成页立即可用")
 
-    st.divider()
+    st.space("medium")
 
     # ---------- 封面设置 ----------
-    st.subheader("🎨 封面设置（多模态）")
+    st.subheader(":material/image: 封面设置", anchor=False)
     from core.covergen import configure as cg_configure, _style as cg_style, _ai_enabled as cg_ai
     st.session_state.setdefault("cover_style", cg_style())
     st.session_state.setdefault("cover_ai", cg_ai())
@@ -972,11 +1199,11 @@ elif page == "⚙️ 设置":
     cg_configure(style=cover_style.split("（")[0], ai_enabled=cover_ai)
     st.caption("发布时若稿件无图，会自动按此风格生成标题封面。")
 
-    st.divider()
-    st.subheader("📄 persona.yaml（人格 + 生成参数 + 规则）")
+    st.space("medium")
+    st.subheader(":material/description: persona.yaml", anchor=False)
     yaml_text = st.text_area("内容格式配置（直接编辑 YAML）", PERSONA_PATH.read_text(encoding="utf-8"),
                              height=420, key="persona_yaml")
-    if st.button("💾 保存 persona.yaml", type="primary"):
+    if st.button("保存 persona.yaml", icon=":material/save:", type="primary"):
         try:
             data = yaml.safe_load(yaml_text)
             save_persona(data)
@@ -984,11 +1211,11 @@ elif page == "⚙️ 设置":
         except yaml.YAMLError as e:
             st.error(f"YAML 语法错误，未保存: {e}")
 
-    st.divider()
-    st.subheader("🛡️ compliance.yaml（合规词表，发布前门禁）")
+    st.space("medium")
+    st.subheader(":material/shield: compliance.yaml", anchor=False)
     comp_text = st.text_area("合规词表（直接编辑 YAML）", COMPLIANCE_PATH.read_text(encoding="utf-8"),
                              height=320, key="comp_yaml")
-    if st.button("💾 保存 compliance.yaml"):
+    if st.button("保存 compliance.yaml", icon=":material/save:"):
         try:
             yaml.safe_load(comp_text)
             COMPLIANCE_PATH.write_text(comp_text, encoding="utf-8")
@@ -1001,9 +1228,33 @@ elif page == "⚙️ 设置":
 # 页 6：状态与日志
 # ============================================================
 else:
-    st.header("📊 状态与日志")
+    _page_header(
+        "状态与日志",
+        "查看 LangGraph 运行、发布留痕和回归评测，定位失败节点与降级路径。",
+        icon="monitoring",
+        eyebrow="Agent console",
+    )
 
-    st.subheader("LangGraph 运行观测")
+    from core.llm import _ollama_reachable
+    ollama_online = _ollama_reachable()
+    with st.container(horizontal=True, gap="small"):
+        st.badge(
+            "Ollama 已连接" if ollama_online else "Ollama 未连接",
+            icon=":material/memory:",
+            color="green" if ollama_online else "orange",
+        )
+        st.badge(
+            "发布登录态已就绪" if STATE_PATH.exists() else "发布登录态未配置",
+            icon=":material/account_circle:",
+            color="green" if STATE_PATH.exists() else "gray",
+        )
+        st.badge(
+            "真实发布已解锁" if real_publish_enabled() else "真实发布安全锁已启用",
+            icon=":material/lock_open:" if real_publish_enabled() else ":material/lock:",
+            color="orange" if real_publish_enabled() else "blue",
+        )
+
+    st.subheader(":material/account_tree: LangGraph 运行观测", anchor=False)
     from core.graph import GraphRunStore
 
     graph_runs = GraphRunStore(LANGGRAPH_CHECKPOINT_PATH).list_recent(limit=50)
@@ -1016,7 +1267,10 @@ else:
         st.metric("门禁拦截", blocked_runs, border=True)
         st.metric("异常", error_runs, border=True)
     if not graph_runs:
-        st.info("还没有 LangGraph 运行记录。到“生成与编辑”选择 LangGraph 后生成一次即可。")
+        st.info(
+            "还没有 LangGraph 运行记录。到“生成工作台”选择 LangGraph 后生成一次即可。",
+            icon=":material/info:",
+        )
     else:
         run_rows = [
             {
@@ -1051,7 +1305,9 @@ else:
             key=f"graph_trace_{selected_run.thread_id}",
         )
 
-    st.subheader("📜 发布留痕（publish_log.json）")
+    st.space("medium")
+    st.subheader(":material/receipt_long: 发布留痕", anchor=False)
+    st.caption("来源：publish_log.json；仅记录状态、链接和时间，不保存正文或密钥。")
     log = PublishLog(path=str(LOG_PATH)).load()
     if not log.records:
         st.info("暂无发布记录")
@@ -1060,7 +1316,8 @@ else:
         st.markdown(_md_table(["id", "status", "url", "ts"],
                               [[str(r.get(k, "")) for k in ("id", "status", "url", "ts")] for r in rows]))
 
-    st.subheader("🗂️ 内容库概览")
+    st.space("medium")
+    st.subheader(":material/inventory_2: 内容库概览", anchor=False)
     bank = ContentBank(str(BANK_DIR))
     items = bank.list_items()
     if not items:
@@ -1076,9 +1333,10 @@ else:
             ])
         st.markdown(_md_table(["id", "topic", "scheduled_at", "status", "url"], rows))
 
-    st.subheader("🧪 评测")
+    st.space("medium")
+    st.subheader(":material/science: 质量评测", anchor=False)
     eval_col1, eval_col2, eval_col3 = st.columns(3)
-    if eval_col1.button("▶️ 内容生成评测", width="stretch"):
+    if eval_col1.button("内容生成评测", icon=":material/play_arrow:", width="stretch"):
         with st.spinner("评测中…"):
             proc = subprocess.run([sys.executable, "eval/scorer.py"], cwd=str(BASE),
                                   capture_output=True, text=True, encoding="utf-8")
@@ -1086,14 +1344,14 @@ else:
         csv_path = BASE / "eval_results.csv"
         if csv_path.exists():
             st.text(csv_path.read_text(encoding="utf-8-sig"))
-    if eval_col2.button("▶️ AI 助手离线回归", width="stretch"):
+    if eval_col2.button("AI 助手离线回归", icon=":material/play_arrow:", width="stretch"):
         with st.spinner("验证路由、引用、步数与回答完整性…"):
             proc = subprocess.run(
                 [sys.executable, "-m", "eval.assistant_scorer"], cwd=str(BASE),
                 capture_output=True, text=True, encoding="utf-8")
         st.code(proc.stdout[-4_000:] if proc.stdout else proc.stderr[-1_200:])
 
-    if eval_col3.button("▶️ RAG 质量门禁", width="stretch"):
+    if eval_col3.button("RAG 质量门禁", icon=":material/play_arrow:", width="stretch"):
         with st.spinner("计算 Recall@1、MRR、延迟与降级状态…"):
             proc = subprocess.run(
                 [sys.executable, "-m", "eval.rag_scorer", "--top-k", "1", "--backend", "hashing"],

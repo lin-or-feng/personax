@@ -1,0 +1,18 @@
+{
+  "mode": "simulated_io",
+  "tasks": 8,
+  "max_concurrency": 2,
+  "peak_concurrency": 2,
+  "serial": {
+    "elapsed_ms": 2004.1,
+    "throughput_per_second": 3.992,
+    "failed": 0
+  },
+  "async": {
+    "elapsed_ms": 1000.8,
+    "throughput_per_second": 7.994,
+    "failed": 0
+  },
+  "speedup": 2.002,
+  "saved_ms": 1003.3
+}

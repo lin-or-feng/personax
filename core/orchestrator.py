@@ -7,7 +7,7 @@ from .style import StyleEnforcer
 from .harness import Harness, RuleConfig, AuditLog
 from .llm import build_system_prompt
 from .prompts import load_prompts
-from .rag import build_rag_from_dir
+from .rag import build_rag_from_dir, resolve_min_score
 
 
 class Orchestrator:
@@ -35,13 +35,14 @@ class Orchestrator:
             enable_hyde=bool(rag_cfg.get("enable_hyde", False)),
             reranker=rag_cfg.get("reranker"),
             reranker_model=rag_cfg.get("reranker_model"),
+            retrieval_mode=rag_cfg.get("retrieval_mode"),
         )
         # 只召回与主题足够贴近的范例（min_score），避免不相干知识跑题；缺省空列表
         rag_chunks = (
             rag_pipe.retrieve_relevant(
                 topic,
                 top_k=int(rag_cfg.get("top_k", 2)),
-                min_score=float(rag_cfg.get("min_score", 0.10)),
+                min_score=resolve_min_score(rag_cfg, rag_pipe),
             )
             if rag_pipe.store.chunks else []
         )

@@ -80,6 +80,7 @@ class AssistantRequest(BaseModel):
 
     question: str = Field(min_length=1, max_length=2_000)
     history: list[ChatMessage] = Field(default_factory=list)
+    memories: list[str] = Field(default_factory=list, max_length=20)
     thread_id: str = Field(default="local")
     use_knowledge: bool = True
     max_steps: int = Field(default=4, ge=2, le=8)
@@ -94,6 +95,26 @@ class AssistantResponse(BaseModel):
     trace: list[AgentTraceStep] = Field(default_factory=list)
     checkpoint_id: str = ""
     degraded: bool = False
+
+
+class AssistantThreadSummary(BaseModel):
+    """可恢复对话的轻量索引；不重复保存完整消息。"""
+
+    thread_id: str
+    route: Literal["direct", "knowledge"]
+    updated_at: float
+    message_count: int = Field(default=0, ge=0)
+    preview: str = ""
+
+
+class AssistantMemory(BaseModel):
+    """用户显式保存的长期记忆。"""
+
+    memory_id: int = Field(ge=1)
+    user_id: str
+    content: str = Field(min_length=1, max_length=500)
+    created_at: float
+    updated_at: float
 
 
 class RouteDecision(BaseModel):

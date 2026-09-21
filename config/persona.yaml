@@ -33,7 +33,12 @@ rag:
   knowledge_dir: knowledge
   chunk_size: 600
   top_k: 2
-  min_score: 0.10
+  retrieval_mode: hybrid           # bm25 / dense / hybrid；消融评测可切换
+  min_score: 0.15                  # 未匹配后端时的保守回退
+  min_score_by_backend:            # 由 120 条回归集校准，不同 cosine 空间不能共用阈值
+    hashing: 0.15
+    ollama: 0.50
+    sentence-transformers: 0.50
   embedding_backend: hashing       # hashing(离线测试) / ollama(真实语义向量) / sentence-transformers
   embedding_model: bge-m3          # ollama pull bge-m3 后可启用
   query_enhancer: rule             # rule(低延迟) / llm(调用 core.llm.complete)
@@ -45,6 +50,10 @@ rag:
 assistant:
   router: rule                 # rule / llm（无效 JSON 自动回退 rule）
   tool_runtime: langchain      # langchain(StructuredTool) / native；两者都必须经过 Harness
+  context_window_messages: 8   # 最近消息上限；新消息进入时自动淘汰最旧消息
+  context_window_tokens: 3000  # 对话历史估算 token 上限（问题/RAG/记忆另算）
+  context_message_tokens: 750  # 单条历史消息上限，防止一条超长文本占满窗口
+  checkpoint_messages: 20     # 本地恢复记录可多于实际注入模型的上下文
 
 # LangGraph 运行状态：SQLite 持久化到项目 D 盘，自动清理过旧运行
 langgraph:
@@ -57,5 +66,7 @@ harness:
   timeout_seconds: 30
   require_approval: true
   sensitive_tools: [xhs_publish]
-  rate_limit: 60          # Skill 调用预算（每分钟）
-  publish_rate_limit: 3   # 真实发布上限（每分钟）
+  rate_limit: 60                 # Skill 调用预算（滑动窗口）
+  rate_window_seconds: 60
+  publish_rate_limit: 3          # 真实发布使用独立滑动窗口
+  publish_rate_window_seconds: 60

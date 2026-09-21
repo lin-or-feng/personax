@@ -1,21 +1,72 @@
-# PersonaX 2.2 🍃 可恢复、可观测、可评测的内容 Agent
+# PersonaX 2.3.1 🍃 有界上下文、双重限流的内容 Agent
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-97%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-121%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
 - **LLM 内容生成**：接入 DeepSeek，提示词资产化（`config/prompts.yaml` 热更新，改文案不动代码）
-- **有状态 AI 助手**：Streamlit 原生对话界面，按需检索、可追溯引用、Agent Trace、SQLite Checkpoint
+- **有状态 AI 助手**：真实流式回答，按需检索、可追溯引用、Agent Trace、SQLite 会话恢复与用户可控长期记忆
+- **有界异步 LLM**：提供 `acomplete` / `acomplete_batch` / `acomplete_stream`，用 `asyncio.Semaphore` 限制在途 API 请求并记录吞吐、峰值并发和失败数
+- **滑动窗口治理**：对话按最近消息数与估算 token 双重裁剪；Skill、真实发布和 LLM 请求频率使用精确滑动窗口
 - **多人格系统**：`config/personas.yaml` 人格库，生成时 `--persona <名字>` 选谁用谁写（内置 4 个人格）
 - **RAG 混合检索**：BM25 + dense embedding 精确 kNN 双路召回，RRF 融合；支持 query rewriting / HyDE、cross-encoder 重排与相关性门控
 - **商用合规引擎**：广告法/医疗金融承诺/导流词表，发布前自动拦截违规内容
 - **真实发布（已实测真发成功）**：Playwright 驱动创作者平台「上传图文」，攻克闭合 Shadow DOM 发布按钮、隐藏文件上传、平台改版容错；以 URL `published=true` 判定真成功
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
-- **可视化工作台**：Streamlit 6 页（生成编辑 / AI 助手 / 内容库定时 / 知识库 / 设置 / 状态日志）
+- **可视化工作台**：统一 AI Studio 视觉语言的 Streamlit 6 页；状态页采用 Agent Console 信息布局，支持亮/暗主题
 - **LangChain 生态实际接入**：助手工具走 `StructuredTool`；内容编排可切换 `StateGraph + RunnableLambda + SqliteSaver`
-- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、97 项 pytest 全绿
+- **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、发布前自动质量门禁
+
+## 🆕 PersonaX 2.3.1：滑动窗口与双重限流
+
+本次是兼容 2.3 的小版本，不改变 RAG/Agent 主流程，主要补齐长对话和多会话同时运行时的资源边界：
+
+| 优化 | 2.3 的问题 | 2.3.1 实现 | 原因 |
+|---|---|---|---|
+| 上下文滑动窗口 | 只固定取最近 8 条，单条超长消息仍可能挤占提示词 | 同时限制最近消息数、估算 token 和单消息 token；Checkpoint 仍保留较长历史 | 模型只接收当前需要的上下文，降低延迟、显存和费用，但不影响本地会话恢复 |
+| LLM 请求频率 | 只有并发数限制，短时间连续启动请求仍可能触发 API RPM 限制 | 同步/异步入口共享 60 秒滑动窗口；每次真实请求及重试都计数 | 控制“单位时间启动多少次”，处理供应商速率配额 |
+| LLM 在途并发 | 原有 Semaphore 只覆盖 async，Streamlit 同步流式未受保护 | 同步入口使用线程 Semaphore，异步入口使用 `asyncio.Semaphore`；Ollama 默认 1、云端默认 2 | 控制“同一时刻跑多少个”，避免单卡争抢显存或云端瞬时突发 |
+| 联网增强限流 | 多会话可能同时消耗搜索额度 | 每后端默认 10 RPM、并发 2；忙时快速降级为空 | 搜索是可选增强，不能因配额排队阻塞正文主链路 |
+| 真实发布单飞 | 发布只有次数配额，两个会话仍可能同时操作同一账号页面 | 发布频率继续独立滑动窗口，并增加进程内 `Semaphore(1)` | 浏览器状态和账号副作用必须串行，降低重复发布与风控风险 |
+| 可观测窗口 | Trace 只记录固定的 `history=8` | 记录实际保留/总消息、估算 token、丢弃和截断数量 | 可以解释回答为什么没有携带更早历史 |
+
+默认参数位于 `config/persona.yaml` 与 `.env.example`。完整适用范围、执行顺序及“不该限流”的模块见 [`docs/RATE_LIMITING_2_3_1.md`](docs/RATE_LIMITING_2_3_1.md)。
+
+## 🆕 PersonaX 2.3：从“有评测”升级到“评测可信”
+
+2.3 优先解决小样本得分虚高、不同向量模型共用阈值、无资料问题误召回和单次降级漏报：
+
+| 优化 | 2.2 的限制 | 2.3 实现 | 验收收益 |
+|---|---|---|---|
+| 120 条 RAG 回归集 | 只有 6 条正例，容易得到偶然高分 | 108 条正例覆盖 27 份资料，另有 12 条知识库外负例；按主题与难度切片 | 同时衡量“找得到”和“不乱找” |
+| 检索消融 | 只能看到混合检索总分 | 同一数据集一键比较 BM25、dense kNN、hybrid；输出 JSON/Markdown 报告 | 可以用数据说明为什么选择混合检索 |
+| 双重召回指标 | 只看原始 Recall/MRR | 新增门控后 Recall、无答案拒检准确率和 P99；同一来源多 chunk 按来源去重 | 防止“召回分数高，但门控后资料全没了” |
+| 后端阈值校准 | hashing 与 bge-m3 共用 `min_score=0.10` | hashing 使用 0.15，Ollama/sentence-transformers 使用 0.50，可按具体模型覆盖 | bge-m3 负例拒检从 0 提升到 1.0，正例门控 Recall@5 达到 0.9815 |
+| 降级聚合 | 只检查最后一条查询的降级状态 | 聚合整个评测集所有组件故障及异常类型 | 前面样例发生的 embedding/reranker 故障不会被漏掉 |
+| 回答证据检查 | 只检查有没有 `[1]` | 校验引用编号范围；无来源时强制标明“本地知识库未检索到可核验资料” | 减少无来源回答被误认为已有知识库支撑 |
+| 建索引失败回退 | Ollama 建索引失败可能在 BM25 前直接中止 | 文档 embedding 失败时保留稀疏索引并记录 `dense_index` 降级 | Ollama 暂时不可用仍能完成关键词检索 |
+| AI Studio 工作台 | 页面层级和按钮语言不统一，运行状态分散 | 统一六页导航、任务卡、工作流进度、Material 图标与亮/暗主题；状态页集中展示服务、门禁、运行和评测 | 日常操作更聚焦，排错信息更容易扫描 |
+
+当前 120 条工程回归集实测：hashing hybrid 的 Recall@5 为 0.8889、门控 Recall@5 为 0.8056、MRR 为 0.7775、负例拒检为 0.75；本机 `bge-m3` 的 Recall@5 为 0.9537、校准门槛后的门控 Recall@5 为 0.9815、MRR 为 0.8035、负例拒检为 1.0。它仍是工程回归集，不等同于真实用户分布或线上 SLA；完整记录见 [`docs/RAG_EVAL_2_3.md`](docs/RAG_EVAL_2_3.md)。
+
+### 流式对话与分层记忆
+
+- `core.llm.complete_stream()` 对 Ollama 与 DeepSeek 使用 OpenAI 兼容接口的 `stream=True`，Streamlit 通过 `st.write_stream` 逐块显示；流中断后不会从头重试并重复输出。
+- **短期记忆**：每个 thread 最多保存最近 20 条消息，提示词只取最近 8 条；页面重开后自动恢复最近会话，也可从“历史会话”切换。
+- **长期记忆**：只保存用户在界面中主动确认的背景或偏好，每条最多 500 字，可随时查看和删除；默认最多注入最近 8 条。
+- 会话记录与长期记忆均保存在本地 `logs/assistant_checkpoints.sqlite3`，不会自动从聊天中提取隐私，也不会作为指令执行。
+- 点击停止时，未完成的半截回答不写入 Checkpoint；只有通过 Reviewer 的最终回答才会持久化。
+
+### 异步 LLM 与 Semaphore 限流
+
+- `core.llm.acomplete()` 是单请求异步入口，`acomplete_batch()` 并发执行相互独立的提示词，`acomplete_stream()` 则在整个流生命周期占用一个并发槽位。
+- 本地 Ollama 默认 `LLM_MAX_CONCURRENCY=1`，云端默认 2；可在 `.env` 覆盖，但实现会把范围限制在 1～16。同一事件循环的所有异步批次共享 Semaphore，同步入口也共享独立的线程 Semaphore。
+- 2.3.1 增加 `LLM_REQUESTS_PER_MINUTE` 滑动窗口。请求先等待频率额度，再占 Semaphore；因此等待 RPM 时不会空占稀缺并发槽位。
+- 当前 Streamlit 对话仍是**同步流式**，但已受到同步 Semaphore 和同一个请求窗口保护。Supervisor → Retriever → Answerer → Reviewer 存在前后依赖，不会为了“看起来并发”而错误地同时启动。
+- 8 个 250ms I/O 模拟请求中，Semaphore(2) 将总耗时从 2004.1ms 降到 1000.8ms（2.002x）；本机 Ollama `qwen2.5:3b` 的 4 请求实测则为 2277.0ms → 2279.6ms（0.999x），说明单 GPU 推理不应盲目提高请求并发。
+- 运行 `python scripts/benchmark_async_llm.py --mode simulated --tasks 8 --concurrency 2 --delay-ms 250` 可复现基准；设计边界、流程与完整数据见 [`docs/ASYNC_ARCHITECTURE.md`](docs/ASYNC_ARCHITECTURE.md)。
 
 ## 🆕 PersonaX 2.2：这次具体优化了什么
 
@@ -54,7 +105,7 @@ LangGraph 运行摘要只保存主题、状态、耗时、节点轨迹与 checkp
 | 4. Agentic RAG | 按需检索、混合召回、门控和回答引用；query enhancer / HyDE / dense / reranker 可独立降级 | dense 失败仍保留 BM25 + RRF，reranker 失败保留融合顺序 |
 | 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
 | 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway` + LangChain `StructuredTool`：Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
-| 7. Eval & Observability | 8 条离线助手回归集；路由、引用、步数、回答率；UI 展示逐步 Trace | 该评测不代表真实 LLM 回答质量，后续再扩充人工/LLM-as-Judge 集合 |
+| 7. Eval & Observability | 12 条离线助手回归；路由、引用覆盖/有效性、无证据声明、步数和回答率；UI 展示逐步 Trace | 确定性评测不代表真实 LLM 语义质量，后续仍需人工/LLM-as-Judge 集合 |
 | 8. 生产化 | 上下文裁剪、会话级限流、最大步数、组件级故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
 
 助手严格只读：它能查询知识库、解释项目和给出建议，但没有真实发布工具；发布仍必须经过现有人工确认与安全锁。
@@ -104,7 +155,7 @@ LangGraph 运行摘要只保存主题、状态、耗时、节点轨迹与 checkp
 - **RRF 排名融合**：只使用每路结果的名次进行融合，避免直接混合 BM25 分数与 cosine 分数。
 - **查询增强**：短主题默认使用低延迟规则改写；复杂问题可通过现有 LLM 后端生成多查询或 HyDE 假设答案。
 - **Cross-Encoder 重排**：只对 RRF 召回的少量候选做 query-document 联合打分，降低全库计算成本。
-- **相关性门控**：`min_score` 过滤低相关知识，避免无关范例污染生成结果。
+- **相关性门控**：`min_score` 过滤低相关知识；2.3 按 embedding 后端分别校准阈值，避免不同 cosine 分布共用一个数字。
 - **可观测性**：每次召回将查询变体、embedding 后端、kNN 模式、融合与重排信息写入 `draft.metadata.rag_trace`。
 - **组件级降级**：LLM query rewrite 失败回退规则改写；HyDE 失败跳过；dense 失败继续 BM25/RRF；reranker 失败保留 RRF 顺序；降级组件和异常类型写入 trace。
 - **持久化嵌入缓存**：非 hashing 文档向量写入 D 盘 `.rag_cache/embeddings.sqlite3`，按模型和文本哈希复用；用户查询不入库，避免无界增长。
@@ -187,12 +238,14 @@ assistant:
 检索回归评测与门禁：
 
 ```powershell
-.\.venv\Scripts\python.exe main.py rag-eval --top-k 1 --backend hashing
+.\.venv\Scripts\python.exe main.py rag-eval --top-k 5 --backend hashing
 # 本机 bge-m3 实测（需 Ollama 正在运行）
-.\.venv\Scripts\python.exe main.py rag-eval --top-k 1 --backend ollama
+.\.venv\Scripts\python.exe main.py rag-eval --top-k 5 --backend ollama --min-score 0.50
+# BM25 / dense / hybrid 消融，并保存可复查报告
+.\.venv\Scripts\python.exe main.py rag-eval --compare --report-md docs/RAG_ABLATION.md
 ```
 
-评测会输出 `Recall@K`、`MRR`、P50/P95 延迟、降级组件和 `rag_trace`。默认门槛为 Recall@1/MRR 均不低于 0.80，未达标时进程返回非零退出码。仓库自带 6 条样例只用于冒烟回归；对外描述性能前，应扩充到至少 50～100 条人工标注查询，并做 BM25、dense kNN、RRF、RRF + reranker 消融对比。
+评测会输出 `Recall@K`、门控 Recall@K、`MRR`、负例拒检准确率、P50/P95/P99、分类/难度切片、阈值扫描和全量降级组件。默认使用 120 条工程回归样例与 hashing 后端接入发布门禁；真实语义质量另用本机 `bge-m3` 复测。后续对外描述线上效果前，仍应补充真实用户问题、人工相关性标注和 Cross-Encoder 对比。
 
 ## 🚀 快速开始
 
@@ -262,7 +315,7 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 97 项单测
+pytest tests/            # 121 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
 python main.py rag-eval --top-k 1  # RAG Recall@K / MRR / 延迟门禁
@@ -290,18 +343,21 @@ personax/
 │   ├── assistant_tools.py  # 类型化检索工具 + MCP-ready Manifest
 │   ├── tool_gateway.py     # 只读工具白名单 + Schema + Harness + Audit
 │   ├── graph.py            # LangGraph + SQLite checkpoint + 节点 Trace
-│   ├── harness.py          # 规则引擎（限流/审批/审计）
+│   ├── harness.py          # 规则引擎（滑动窗口/审批/审计）
+│   ├── limits.py           # 线程安全滑动窗口限流器
+│   ├── context_window.py   # 最近消息 + token 双重上下文窗口
 │   ├── compliance.py       # 合规引擎
 │   ├── rag.py              # RAG（BM25 + dense kNN + RRF + 可选重排）
 │   ├── persona.py          # 多人格库
 │   ├── prompts.py          # 提示词资产加载
-│   └── llm.py              # DeepSeek 客户端（重试/超时/惰性依赖）
+│   ├── async_runtime.py    # Semaphore 有界并发 + 批处理指标
+│   └── llm.py              # 同步/异步/流式 LLM 统一入口
 ├── skills/                 # Skill 系统（@register + 路由）
 ├── publishers/             # 发布层（Playwright 真发 / 定时调度）
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（97 项）
+└── tests/                  # pytest（121 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -386,7 +442,7 @@ python scripts/install_hooks.py
 - 话题「话题芯片」暂未自动添加（网页编辑器话题面板交互复杂，标签以 `#文本` 留正文，可在 App 补加）
 - VectorStore 为内存实现（接口已抽象，可换 Milvus/Qdrant）
 - SQLite checkpoint 适合本地单机与轻量部署，不适合多进程高并发；生产集群应换 PostgresSaver 等共享后端
-- RAG/助手评测集仍只有 6/8 条，属于工程冒烟门禁，不代表线上质量 SLA
+- RAG/助手评测集已扩至 120/12 条，但仍是工程回归集，不代表真实用户分布或线上质量 SLA
 - 单账号设计（多账号/并发为后续方向）
 
 ## 🧰 技术栈

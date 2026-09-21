@@ -6,5 +6,9 @@
   {"id": "agent_trace", "question": "Agent Trace 能帮助定位什么问题？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
   {"id": "checkpoint", "question": "Checkpoint 在多轮对话里有什么用？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
   {"id": "tool_contract", "question": "MCP-ready 工具契约包含哪些字段？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "dense_knn", "question": "dense kNN 在混合检索中负责什么？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "trace_debug", "question": "怎样用运行 Trace 判断组件是否降级？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": true},
+  {"id": "missing_evidence", "question": "知识库没有覆盖的火星基地农业方案是什么？", "use_knowledge": true, "expected_route": "knowledge", "citation_required": false, "expect_no_evidence": true, "min_score": 0.95},
+  {"id": "direct_help", "question": "你能做什么", "use_knowledge": true, "expected_route": "direct", "citation_required": false},
   {"id": "manual_off", "question": "解释 RAG", "use_knowledge": false, "expected_route": "direct", "citation_required": false}
 ]

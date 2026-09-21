@@ -1,0 +1,18 @@
+{
+  "mode": "ollama:qwen2.5:3b",
+  "tasks": 4,
+  "max_concurrency": 2,
+  "peak_concurrency": 2,
+  "serial": {
+    "elapsed_ms": 2277.0,
+    "throughput_per_second": 1.757,
+    "failed": 0
+  },
+  "async": {
+    "elapsed_ms": 2279.6,
+    "throughput_per_second": 1.755,
+    "failed": 0
+  },
+  "speedup": 0.999,
+  "saved_ms": -2.6
+}
