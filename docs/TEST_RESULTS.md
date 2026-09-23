@@ -167,7 +167,7 @@
 | 宿主机 Ollama 集成 | 容器内 `core.llm.complete` + `OllamaEmbedder.encode` | `host.docker.internal` 链路通过；qwen2.5:7b 最小生成返回 `OK`，bge-m3 返回 1024 维归一化向量；测试后卸载驻留模型 |
 | 容器运行时加固 | `docker inspect` + 根文件系统/命名卷写入探针 | `ReadonlyRootfs=true`、PID=256、`CapDrop=ALL`、`no-new-privileges`；根文件系统写入被拒绝、命名卷可写，端口仅绑定 `127.0.0.1` |
 | 镜像敏感物检查 | 容器内检查 `.env`、`storage_state.json`、`publish_log.json`、`.git` | 全部不存在；本地密钥、浏览器登录态、发布日志和 Git 历史未进入镜像 |
-| 持续集成 | `.github/workflows/docker-smoke.yml` | 已配置 push / PR 自动构建与健康端点 smoke test；需推送后由 GitHub Actions 实际执行 |
+| 持续集成 | `.github/workflows/docker-smoke.yml` | GitHub Actions `Docker smoke test #1` 对提交 `8138164` 实际通过，完成镜像构建、容器健康等待和 HTTP smoke test，耗时 58s（run `35845614959`） |
 
 Docker 默认只复现生成、对话、RAG、评测和 Streamlit 工作台，真实发布安全锁固定关闭，不包含浏览器登录态。本轮已完成当前 Windows 主机的真实镜像构建与健康检查，但不能替代第二台机器的跨机验收。
 
