@@ -15,9 +15,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio"]
 publish = ["playwright>=1.40"]
-web = ["streamlit>=1.30"]
+web = ["streamlit>=1.62,<2"]
 rag = ["sentence-transformers>=3.0"]
-all = ["pytest>=8.0", "playwright>=1.40", "streamlit>=1.30", "sentence-transformers>=3.0"]
+all = ["pytest>=8.0", "playwright>=1.40", "streamlit>=1.62,<2", "sentence-transformers>=3.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -2,7 +2,7 @@
 
 > 一个**真实可用**的小红书内容 Agent：LLM 多人格写作 × Skill 系统 × 合规管控 × Playwright 真实发布 × 定时调度 × 可视化工作台。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-121%20passed-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![DeepSeek](https://img.shields.io/badge/LLM-DeepSeek-green) ![LangChain](https://img.shields.io/badge/LangChain-Core%20%2B%20LangGraph-1C3C3C) ![Tests](https://img.shields.io/badge/Tests-124%20passed-brightgreen)
 
 ## ✨ 亮点（Highlights）
 
@@ -17,6 +17,7 @@
 - **定时自动发布**：`content_bank` 稿件库 + 到期自动发 + `publish_log.json` 留痕 + 幂等防重复
 - **可视化工作台**：统一 AI Studio 视觉语言的 Streamlit 6 页；状态页采用 Agent Console 信息布局，支持亮/暗主题
 - **LangChain 生态实际接入**：助手工具走 `StructuredTool`；内容编排可切换 `StateGraph + RunnableLambda + SqliteSaver`
+- **Docker 可复现运行**：固定 Python/核心依赖版本，Compose 一键启动；健康检查与命名卷保留会话、知识库和向量缓存
 - **工程化**：三层解耦、跨层数据契约、Skill 注册路由、审计留痕、发布前自动质量门禁
 
 ## 🆕 PersonaX 2.3.1：滑动窗口与双重限流
@@ -106,7 +107,7 @@ LangGraph 运行摘要只保存主题、状态、耗时、节点轨迹与 checkp
 | 5. Multi-Agent | Supervisor + Retriever/Answerer/Reviewer 职责隔离 | 是可单测的逻辑 Worker，不冒充多个独立模型并行 |
 | 6. MCP 与工具工程化 | `KnowledgeSearchTool` + `AssistantToolGateway` + LangChain `StructuredTool`：Schema、白名单、Harness 限流与审计 | 当前是 **transport-neutral MCP-ready 适配层**，尚未启动独立 MCP Server |
 | 7. Eval & Observability | 12 条离线助手回归；路由、引用覆盖/有效性、无证据声明、步数和回答率；UI 展示逐步 Trace | 确定性评测不代表真实 LLM 语义质量，后续仍需人工/LLM-as-Judge 集合 |
-| 8. 生产化 | 上下文裁剪、会话级限流、最大步数、组件级故障降级、本地 checkpoint、后端切换时隔离客户端 | 未声称已完成高并发、Redis、Docker 或线上 SLA |
+| 8. 生产化 | 上下文裁剪、会话级限流、最大步数、组件级故障降级、本地 checkpoint、后端切换隔离、单实例 Docker 复现 | 未声称已完成高并发、Redis、多 Worker 或线上 SLA |
 
 助手严格只读：它能查询知识库、解释项目和给出建议，但没有真实发布工具；发布仍必须经过现有人工确认与安全锁。
 
@@ -264,6 +265,45 @@ pip install playwright
 python -m playwright install chromium   # 不想下载可用系统浏览器 --browser msedge
 ```
 
+### Docker 一键复现（推荐给体验者）
+
+Docker 模式默认使用离线模板，因此没有 API Key、没有本地模型也能打开完整工作台：
+
+```bash
+git clone https://github.com/lin-or-feng/personax.git
+cd personax
+docker compose up -d --build --wait
+```
+
+打开 <http://localhost:8501>。Compose 默认只绑定 `127.0.0.1`；项目没有内置登录鉴权，不会默认向局域网或公网开放。查看状态与日志：
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+要连接宿主机已有的 Ollama，先拉取模型，再在当前终端设置运行模式：
+
+```powershell
+ollama pull qwen2.5:7b
+ollama pull bge-m3
+$env:LLM_BACKEND = "ollama"
+$env:RAG_EMBEDDING_BACKEND = "ollama"
+docker compose up -d --build --wait
+```
+
+Compose 会把容器内的 Ollama 地址自动设为 `host.docker.internal:11434`；应用的连通性探测和实际调用使用同一地址。不要为了省事把 Ollama 的 11434 端口直接暴露到公网。
+
+也可以走 DeepSeek：在项目根目录 `.env` 填入 `DEEPSEEK_API_KEY`，并设置 `LLM_BACKEND=deepseek` 后重新执行 `docker compose up -d --build --wait`。Key 只在容器启动时注入，`.dockerignore` 会阻止 `.env` 和浏览器登录态进入镜像。
+
+`logs`、`.rag_cache`、`knowledge`、`content_bank` 和生成封面使用 Docker 命名卷；普通 `docker compose down` 后数据仍保留。`docker compose down -v` 会永久删除这些卷，只应在明确要重置全部容器数据时使用。
+
+容器以非 root 用户和只读根文件系统运行，默认移除全部 Linux capabilities、启用 `no-new-privileges`、限制进程数并轮转日志。如确需局域网演示，可临时设置 `PERSONAX_BIND_HOST=0.0.0.0`，但必须同时配置防火墙和带认证的反向代理；不要直接做公网端口映射。漏洞报告方式见 [`SECURITY.md`](SECURITY.md)。
+
+仓库中的 `.github/workflows/docker-smoke.yml` 会在 Docker 相关文件变化时构建镜像、等待容器健康并请求 Streamlit 健康端点，避免“配置文件存在但镜像实际起不来”。
+
+> Docker 镜像用于复现生成、对话、RAG、评测和可视化链路。真实小红书发布固定关闭，也不把 Playwright 浏览器或 `storage_state.json` 打入镜像；有头发布调试继续在 Windows 宿主机运行。
+
 ### 1. 配置 DeepSeek Key（不配也能跑，走离线模板）
 
 创建 `.env`（参考 `.env.example`，已被 .gitignore 忽略）：
@@ -315,7 +355,7 @@ Windows 也可以直接双击项目根目录的 `启动PersonaX可视化.cmd`，
 ### 7. 测试与评估
 
 ```bash
-pytest tests/            # 121 项单测
+pytest tests/            # 124 项单测
 python main.py eval      # 内容质量打分 → eval_results.csv
 python -m eval.assistant_scorer  # AI 助手离线回归（不调用 Ollama）
 python main.py rag-eval --top-k 1  # RAG Recall@K / MRR / 延迟门禁
@@ -330,6 +370,9 @@ python main.py notes --browser msedge   # 核实真实发布的笔记
 personax/
 ├── main.py                 # CLI 入口（generate/publish/schedule/login/notes/probe/personas/eval/rag-eval）
 ├── app.py                  # Streamlit 可视化工作台
+├── Dockerfile              # 非 root Streamlit 运行镜像 + 健康检查
+├── compose.yaml            # 一键启动、宿主机 Ollama 接入与数据卷
+├── requirements-docker.txt # 容器核心依赖版本基线
 ├── setup.ps1               # Windows 一键安装
 ├── config/
 │   ├── persona.yaml        # 默认人格 + 系统规则（harness/rag/generation）
@@ -357,7 +400,7 @@ personax/
 ├── knowledge/              # RAG 知识库（*.md 带 front-matter）
 ├── content_bank/           # 定时稿件库（*.json）
 ├── eval/                   # 评估闭环
-└── tests/                  # pytest（121 项）
+└── tests/                  # pytest（124 项）
 ```
 
 ## 🎛️ 调优方向（怎么让内容更好）
@@ -444,6 +487,7 @@ python scripts/install_hooks.py
 - SQLite checkpoint 适合本地单机与轻量部署，不适合多进程高并发；生产集群应换 PostgresSaver 等共享后端
 - RAG/助手评测集已扩至 120/12 条，但仍是工程回归集，不代表真实用户分布或线上质量 SLA
 - 单账号设计（多账号/并发为后续方向）
+- Docker 面向单实例可复现演示；真实发布、有头浏览器和登录态仍在宿主机执行，不在容器中开放
 
 ## 🧰 技术栈
 

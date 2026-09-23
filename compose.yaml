@@ -1,0 +1,61 @@
+name: personax
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: personax:2.3.1
+    init: true
+    read_only: true
+    ports:
+      # 默认只允许本机访问；项目没有内置登录鉴权，禁止直接暴露到公网。
+      - "${PERSONAX_BIND_HOST:-127.0.0.1}:${PERSONAX_PORT:-8501}:8501"
+    environment:
+      # 默认离线模板保证零 Key、零模型也能启动；按 README 切换 Ollama/DeepSeek。
+      LLM_BACKEND: "${LLM_BACKEND:-offline}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b}"
+      LLM_MAX_CONCURRENCY: "${LLM_MAX_CONCURRENCY:-1}"
+      LLM_REQUESTS_PER_MINUTE: "${LLM_REQUESTS_PER_MINUTE:-60}"
+      OLLAMA_BASE_URL: "${PERSONAX_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      RAG_OLLAMA_BASE_URL: "${PERSONAX_RAG_OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+      RAG_EMBEDDING_BACKEND: "${RAG_EMBEDDING_BACKEND:-hashing}"
+      RAG_EMBEDDING_MODEL: "${RAG_EMBEDDING_MODEL:-bge-m3}"
+      RAG_EMBEDDING_CACHE: "1"
+      RAG_EMBEDDING_CACHE_PATH: "/app/.rag_cache/embeddings.sqlite3"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_TIMEOUT: "${DEEPSEEK_TIMEOUT:-30}"
+      WEB_SEARCH_ENABLED: "${WEB_SEARCH_ENABLED:-0}"
+      WEB_SEARCH_BACKEND: "${WEB_SEARCH_BACKEND:-bing}"
+      # 容器镜像不安装浏览器，也不接管宿主机登录态；发布能力固定关闭。
+      XHS_REAL_PUBLISH_ENABLED: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - personax_logs:/app/logs
+      - personax_rag_cache:/app/.rag_cache
+      - personax_content_bank:/app/content_bank
+      - personax_knowledge:/app/knowledge
+      - personax_generated_assets:/app/assets/covers
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /home/personax/.streamlit:size=16m,uid=100,gid=101,mode=0700
+    restart: unless-stopped
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  personax_logs:
+  personax_rag_cache:
+  personax_content_bank:
+  personax_knowledge:
+  personax_generated_assets:

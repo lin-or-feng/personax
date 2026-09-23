@@ -14,6 +14,7 @@ import weakref
 from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from .async_runtime import AsyncBatchResult, gather_bounded
 from .limits import SlidingWindowRateLimiter
@@ -43,7 +44,11 @@ _ASYNC_CLIENT_BACKEND: str | None = None
 _OpenAI = None
 _RETRYABLE: tuple = ()
 _OVERRIDES: dict = {}   # 运行时覆盖（可视化界面设置后端/模型/温度）
-_OLLAMA_CHECK: dict = {"ts": 0.0, "ok": False}   # 本机 Ollama 可达性缓存（5s）
+_OLLAMA_CHECK: dict = {
+    "ts": 0.0,
+    "ok": False,
+    "endpoint": None,
+}   # Ollama 可达性缓存（5s，同一地址复用）
 _ASYNC_SEMAPHORES: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _SYNC_SEMAPHORES: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
 _REQUEST_LIMITERS: dict[tuple[str, int], SlidingWindowRateLimiter] = {}
@@ -76,18 +81,28 @@ def configure(*, backend: str | None = None, model: str | None = None,
 
 
 def _ollama_reachable(timeout: float = 0.6) -> bool:
-    """检测本机 Ollama 是否在运行（缓存 5 秒）"""
+    """检测配置的 Ollama 端点是否可达（缓存 5 秒）。
+
+    本地运行时默认连接 127.0.0.1；Docker 部署可将 ``OLLAMA_BASE_URL``
+    指向 ``host.docker.internal``。只做 TCP 探测，不发送模型或用户数据。
+    """
     import time as _t
-    if _t.time() - _OLLAMA_CHECK["ts"] < 5:
+    raw_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").strip()
+    parsed = urlsplit(raw_url if "://" in raw_url else f"http://{raw_url}")
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    endpoint = (host, port)
+    if (_t.time() - _OLLAMA_CHECK["ts"] < 5
+            and _OLLAMA_CHECK.get("endpoint") == endpoint):
         return _OLLAMA_CHECK["ok"]
     try:
         import socket
-        s = socket.create_connection(("127.0.0.1", 11434), timeout=timeout)
+        s = socket.create_connection(endpoint, timeout=timeout)
         s.close()
-        _OLLAMA_CHECK.update(ts=_t.time(), ok=True)
+        _OLLAMA_CHECK.update(ts=_t.time(), ok=True, endpoint=endpoint)
         return True
     except OSError:
-        _OLLAMA_CHECK.update(ts=_t.time(), ok=False)
+        _OLLAMA_CHECK.update(ts=_t.time(), ok=False, endpoint=endpoint)
         return False
 
 

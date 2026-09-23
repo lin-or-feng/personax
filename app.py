@@ -340,11 +340,12 @@ if page == "generate":
     task_panel.subheader(":material/tune: 本次任务", anchor=False)
     task_panel.caption("选择模型、编排方式和写作人格；这些设置只影响本次生成。")
     be1, be2, be3 = task_panel.columns([2, 2, 1])
-    default_be = "ollama（本地免费）" if _backend() == "ollama" else "deepseek（云端）"
+    backend_labels = ["ollama（本地免费）", "deepseek（云端）", "offline（离线模板）"]
+    backend_index = {"ollama": 0, "deepseek": 1, "offline": 2}.get(_backend(), 2)
     backend_ch = be1.selectbox(
         "模型后端",
-        ["ollama（本地免费）", "deepseek（云端）", "offline（离线模板）"],
-        index=0 if default_be.startswith("ollama") else 1,
+        backend_labels,
+        index=backend_index,
         help="ollama=本地免费生成（需已运行 Ollama）；deepseek=云端（需 .env 填 Key）；offline=不调模型用模板")
     if backend_ch.startswith("ollama"):
         model_choices = ["qwen2.5:7b", "qwen2.5:3b", "qwen2.5:14b", "glm4:9b", "deepseek-r1:7b"]

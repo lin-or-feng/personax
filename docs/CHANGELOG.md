@@ -1,5 +1,28 @@
 # 更新日志（Changelog）
 
+## 未发布（2026-09-23）—— Docker 可复现运行
+
+### 📦 容器化
+- 新增非 root `Dockerfile`、`compose.yaml`、`.dockerignore` 和容器直接依赖版本基线
+- Streamlit 固定监听 `0.0.0.0:8501`，加入 `/_stcore/health` 健康检查
+- SQLite 日志、RAG embedding 缓存、知识库、稿件库和生成封面使用命名卷持久化
+- 容器默认离线模板，零 Key/零模型可启动；可通过 `host.docker.internal` 连接宿主机 Ollama，或在运行时注入 DeepSeek Key
+
+### 🔧 容器兼容修复
+- Ollama 可达性检测不再写死 `127.0.0.1:11434`，改为解析 `OLLAMA_BASE_URL` 的主机与端口，并按端点隔离 5 秒缓存
+- 生成页正确识别 `LLM_BACKEND=offline`，Docker 默认模式不再误选 DeepSeek
+- Docker 构建上下文排除 `.env`、`storage_state.json`、日志、向量缓存和本地测试/简历产物
+- 容器内真实发布安全锁固定关闭；Playwright 有头调试和登录态继续留在 Windows 宿主机
+- 新增 GitHub Actions Docker smoke test：构建镜像、等待健康状态并请求 Streamlit 健康端点
+- 默认端口只绑定 `127.0.0.1`；启用只读根文件系统、非 root、capabilities 全移除、`no-new-privileges`、PID 上限和日志轮转
+- Python 基础镜像与 GitHub Actions checkout 固定到校验过的 digest/SHA；新增 Dependabot 与中文 `SECURITY.md`
+
+### ✅ 验证边界
+- 新增 Compose 安全默认值、敏感文件排除和容器 Ollama 地址解析回归测试
+- Windows 10 + WSL 2.7.14 + Docker Engine 29.8.0 实机完成 `docker compose up -d --build --wait`；容器健康、8501 页面与 `/_stcore/health` 均通过
+- 容器经 `host.docker.internal` 实测调用宿主机 qwen2.5:7b 与 bge-m3 成功，分别完成最小生成和 1024 维向量编码
+- 容器实测以 UID 100 非 root 用户运行，Docker 数据盘落在 `D:\DockerData`；真实发布、有头浏览器和跨机器验收仍不在本轮范围
+
 ## v2.3.1（2026-09-21）—— 滑动上下文与双重限流
 
 ### 🧠 上下文滑动窗口

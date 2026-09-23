@@ -151,6 +151,26 @@
 
 验证只使用离线/确定性故障注入，没有登录或调用小红书，没有触发真实发布。限流器是单进程实现；多 Worker 部署仍需 Redis 等共享计数器与分布式锁。
 
+## 阶段 10：Docker 可复现运行
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| Compose 结构 | PyYAML 解析 `compose.yaml` + 契约测试 | 通过；默认 offline，8501 仅绑定 `127.0.0.1`，宿主机 Ollama 地址和 5 个持久化卷有效 |
+| 容器 Ollama 地址 | `tests/test_docker_deployment.py` 注入 `host.docker.internal:11434` | TCP 探测使用配置端点，不再写死容器自身 `127.0.0.1` |
+| 构建上下文安全 | `.dockerignore` 契约测试 + `check_secrets.py --strict` | `.env`、登录态、日志和缓存不进入镜像；281 个文件中 0 个可提交危险项 |
+| Docker 专项回归 | `pytest tests/test_docker_deployment.py tests/test_async_runtime.py` | 8 passed，0 failed，0.27s |
+| 完整单测 | `python -m pytest tests` | 124 passed，0 failed，21.04s |
+| Python/YAML/差异格式 | `compileall` + PyYAML + `git diff --check` | 通过 |
+| 镜像构建与健康检查 | `docker compose up -d --build --wait --wait-timeout 300` | Windows 10 + WSL 2.7.14 + Docker Engine 29.8.0 实机通过；`personax:2.3.1` 构建成功，容器状态 healthy |
+| HTTP 与运行身份 | 请求 `http://127.0.0.1:8501/`、`/_stcore/health` + 容器内 `id` | 页面与健康端点均返回 HTTP 200（health=`ok`）；进程以 UID 100 `personax` 非 root 用户运行 |
+| 依赖与数据位置 | 容器内版本检查 + 宿主机数据盘检查 | Streamlit 1.62.0、LangChain Core 1.6.0；Docker VHDX 位于 `D:\DockerData`，未占用 C 盘作为主数据盘 |
+| 宿主机 Ollama 集成 | 容器内 `core.llm.complete` + `OllamaEmbedder.encode` | `host.docker.internal` 链路通过；qwen2.5:7b 最小生成返回 `OK`，bge-m3 返回 1024 维归一化向量；测试后卸载驻留模型 |
+| 容器运行时加固 | `docker inspect` + 根文件系统/命名卷写入探针 | `ReadonlyRootfs=true`、PID=256、`CapDrop=ALL`、`no-new-privileges`；根文件系统写入被拒绝、命名卷可写，端口仅绑定 `127.0.0.1` |
+| 镜像敏感物检查 | 容器内检查 `.env`、`storage_state.json`、`publish_log.json`、`.git` | 全部不存在；本地密钥、浏览器登录态、发布日志和 Git 历史未进入镜像 |
+| 持续集成 | `.github/workflows/docker-smoke.yml` | 已配置 push / PR 自动构建与健康端点 smoke test；需推送后由 GitHub Actions 实际执行 |
+
+Docker 默认只复现生成、对话、RAG、评测和 Streamlit 工作台，真实发布安全锁固定关闭，不包含浏览器登录态。本轮已完成当前 Windows 主机的真实镜像构建与健康检查，但不能替代第二台机器的跨机验收。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。

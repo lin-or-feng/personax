@@ -1,0 +1,58 @@
+name: Docker smoke test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "compose.yaml"
+      - ".dockerignore"
+      - "requirements-docker.txt"
+      - "pyproject.toml"
+      - "app.py"
+      - "core/**"
+      - "config/**"
+      - ".github/workflows/docker-smoke.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "compose.yaml"
+      - ".dockerignore"
+      - "requirements-docker.txt"
+      - "pyproject.toml"
+      - "app.py"
+      - "core/**"
+      - "config/**"
+      - ".github/workflows/docker-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and start offline stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+
+      - name: Verify Streamlit health endpoint
+        run: curl --fail --show-error --retry 5 --retry-delay 2 http://127.0.0.1:8501/_stcore/health
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --no-color app
+
+      - name: Stop stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
