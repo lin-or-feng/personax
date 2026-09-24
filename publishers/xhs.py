@@ -14,6 +14,7 @@
 6. 限速          —— 滑动窗口限制频率 + Semaphore(1) 阻止进程内并发发布
 7. 选择器容错    —— 每个元素给多个候选选择器（小红书改版后自动换）
 8. 图片上传      —— 支持封面/多图（draft.metadata["images"] / ["cover"]）
+9. 持久化审批    —— 可选 LangGraph interrupt/resume 审批与 SQLite 幂等记录
 """
 from __future__ import annotations
 import functools
@@ -21,10 +22,13 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .base import Publisher
 from core.types import Draft, PublishResult
+
+if TYPE_CHECKING:
+    from core.approval import PublishApprovalStore
 
 
 _PUBLISH_SEMAPHORE = threading.BoundedSemaphore(1)
@@ -232,6 +236,9 @@ class XhsPlaywrightPublisher(Publisher):
         user_id: str | None = None,
         scan_wait_seconds: int = 120,
         keep_browser_on_failure: bool = False,
+        approval_store: "PublishApprovalStore | None" = None,
+        approval_request_id: str | None = None,
+        require_persisted_approval: bool = False,
     ):
         self.storage_state = storage_state
         self.headless = headless
@@ -249,6 +256,9 @@ class XhsPlaywrightPublisher(Publisher):
         # 调试模式：失败后不由程序关闭有头浏览器，直到用户手动关闭窗口。
         # 便于直接查看平台提示、截图未覆盖到的浮层，并人工修改内容。
         self.keep_browser_on_failure = keep_browser_on_failure
+        self.approval_store = approval_store
+        self.approval_request_id = approval_request_id
+        self.require_persisted_approval = require_persisted_approval
         self.ai_generated = True   # 是否标注「内容由 AI 生成」（合规：默认标注，可被 draft.metadata 覆盖）
         self.browser_notes: list[str] = []   # 浏览器检测/切换原因（供前端展示）
 
@@ -261,6 +271,31 @@ class XhsPlaywrightPublisher(Publisher):
         confirm: Optional[Callable[[Draft], bool]] = None,
     ) -> PublishResult:
         _t0 = time.time()
+        persisted_approval = None
+        if self.approval_store is not None and self.approval_request_id:
+            persisted_approval = self.approval_store.get(self.approval_request_id)
+            if persisted_approval is not None and persisted_approval.status == "consumed":
+                result = PublishResult(
+                    success=True,
+                    url=persisted_approval.published_url or None,
+                    message=(
+                        "[IDEMPOTENT] 该审批已完成发布，跳过重复操作: "
+                        f"{persisted_approval.published_url or persisted_approval.request_id}"
+                    ),
+                )
+                _record_publish("real", draft, result, _t0)
+                return result
+
+        if self.require_persisted_approval:
+            if self.approval_store is None or not self.approval_request_id:
+                raise ApprovalDenied("真实发布缺少持久化审批请求")
+            try:
+                persisted_approval = self.approval_store.require_approved(
+                    self.approval_request_id, draft, self.user_id or "anonymous",
+                )
+            except PermissionError as exc:
+                raise ApprovalDenied(str(exc)) from exc
+
         # 1) 幂等：已发布过则跳过
         if draft.metadata.get("publish_url"):
             result = PublishResult(
@@ -280,7 +315,7 @@ class XhsPlaywrightPublisher(Publisher):
                 return result
 
         # 3) 人工审批（默认开启，无人值守需 auto_approve）
-        if not self.auto_approve:
+        if not self.auto_approve and persisted_approval is None:
             approved = confirm(draft) if confirm else self._ask_human(draft)
             if not approved:
                 raise ApprovalDenied(f"用户拒绝发布《{draft.title}》")
@@ -299,6 +334,8 @@ class XhsPlaywrightPublisher(Publisher):
             try:
                 url = self._do_publish(draft)
                 draft.metadata["publish_url"] = url
+                if persisted_approval is not None and self.approval_store is not None:
+                    self.approval_store.mark_consumed(persisted_approval.request_id, url)
                 result = PublishResult(success=True, url=url, message=f"发布成功: {url}")
                 _record_publish("real", draft, result, _t0)
                 return result

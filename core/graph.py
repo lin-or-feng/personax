@@ -415,11 +415,11 @@ class LangGraphOrchestrator:
             if rag_pipe.store.chunks else []
         )
         examples = [
-            chunk.text for chunk in rag_chunks
+            chunk.context_text for chunk in rag_chunks
             if (chunk.metadata or {}).get("retrieval_role", "example") != "reference"
         ]
         references = [
-            chunk.text for chunk in rag_chunks
+            chunk.context_text for chunk in rag_chunks
             if (chunk.metadata or {}).get("retrieval_role") == "reference"
         ]
         rag_pipe.last_trace["roles"] = {

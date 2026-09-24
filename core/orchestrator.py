@@ -47,11 +47,11 @@ class Orchestrator:
             if rag_pipe.store.chunks else []
         )
         rag_examples = [
-            c.text for c in rag_chunks
+            c.context_text for c in rag_chunks
             if (c.metadata or {}).get("retrieval_role", "example") != "reference"
         ]
         rag_references = [
-            c.text for c in rag_chunks
+            c.context_text for c in rag_chunks
             if (c.metadata or {}).get("retrieval_role") == "reference"
         ]
         rag_pipe.last_trace["roles"] = {

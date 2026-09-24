@@ -1,0 +1,18 @@
+[
+  {"id":"support-01","answer":"BM25 负责关键词召回 [1]。","sources":[{"ref_id":"1","title":"混合检索","excerpt":"BM25 负责关键词召回，适合专有名词与精确匹配。"}],"expected_supported":true},
+  {"id":"support-02","answer":"dense kNN 用向量相似度召回语义相关内容 [1]。","sources":[{"ref_id":"1","title":"向量检索","excerpt":"dense kNN 计算向量相似度，召回语义相关的知识片段。"}],"expected_supported":true},
+  {"id":"support-03","answer":"RRF 根据不同召回通道的排名进行融合 [1]。","sources":[{"ref_id":"1","title":"RRF","excerpt":"RRF 使用各检索通道的排名进行融合，不直接混合不同量纲的分数。"}],"expected_supported":true},
+  {"id":"support-04","answer":"相关性门控会过滤低分片段 [1]。","sources":[{"ref_id":"1","title":"门控","excerpt":"min_score 相关性门控过滤低分片段，减少无关资料注入。"}],"expected_supported":true},
+  {"id":"support-05","answer":"Checkpoint 用于保存流程状态并支持恢复 [1]。","sources":[{"ref_id":"1","title":"Checkpoint","excerpt":"Checkpoint 保存流程状态，使中断后的任务可以恢复。"}],"expected_supported":true},
+  {"id":"support-06","answer":"Agent Trace 会记录节点状态、耗时和降级原因 [1]。","sources":[{"ref_id":"1","title":"可观测性","excerpt":"Agent Trace 记录节点状态、耗时、重试次数和降级原因。"}],"expected_supported":true},
+  {"id":"support-07","answer":"SQLite 适合当前本地单实例部署 [1]。","sources":[{"ref_id":"1","title":"部署边界","excerpt":"SQLite checkpoint 面向本地单实例和轻量部署。"}],"expected_supported":true},
+  {"id":"support-08","answer":"真实发布前必须经过人工审批 [1]。","sources":[{"ref_id":"1","title":"发布安全","excerpt":"真实发布必须人工审批、限速并进行幂等校验。"}],"expected_supported":true},
+  {"id":"reject-01","answer":"BM25 可以直接生成封面图片 [1]。","sources":[{"ref_id":"1","title":"混合检索","excerpt":"BM25 负责关键词召回，适合精确匹配。"}],"expected_supported":false},
+  {"id":"reject-02","answer":"RRF 会训练大模型参数 [1]。","sources":[{"ref_id":"1","title":"RRF","excerpt":"RRF 根据不同检索通道的名次融合排序。"}],"expected_supported":false},
+  {"id":"reject-03","answer":"Checkpoint 能自动审核广告法 [1]。","sources":[{"ref_id":"1","title":"Checkpoint","excerpt":"Checkpoint 保存状态并支持中断恢复。"}],"expected_supported":false},
+  {"id":"reject-04","answer":"系统已经支持跨机器高并发 [1]。","sources":[{"ref_id":"1","title":"部署边界","excerpt":"当前只支持本地单实例，多机器部署仍需共享后端。"}],"expected_supported":false},
+  {"id":"reject-05","answer":"Cross-Encoder 已经在线上带来 50% 提升 [1]。","sources":[{"ref_id":"1","title":"重排实验","excerpt":"Cross-Encoder 为可选组件，目前尚未记录正式消融成绩。"}],"expected_supported":false},
+  {"id":"reject-06","answer":"ANN 已经替代精确 kNN [1]。","sources":[{"ref_id":"1","title":"向量检索","excerpt":"当前知识库继续使用精确 kNN，尚未引入 ANN。"}],"expected_supported":false},
+  {"id":"reject-07","answer":"所有回答都能保证完全没有幻觉。","sources":[{"ref_id":"1","title":"评测边界","excerpt":"工程回归不能证明回答完全没有幻觉。"}],"expected_supported":false},
+  {"id":"reject-08","answer":"工具调用已经成功 [9]。","sources":[{"ref_id":"1","title":"工具状态","excerpt":"工具执行状态需要通过 trace_id 查询。"}],"expected_supported":false}
+]

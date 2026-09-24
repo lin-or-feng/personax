@@ -316,6 +316,7 @@ def complete(
     max_tokens: int | None = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
+    trace_id: str = "",
 ) -> str:
     """统一 LLM 调用入口（带重试）。
 
@@ -354,7 +355,7 @@ def complete(
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-            _record_usage(model, t0, resp)
+            _record_usage(model, t0, resp, trace_id=trace_id)
             return resp.choices[0].message.content or ""
         except _RETRYABLE as e:
             last_err = e
@@ -373,6 +374,7 @@ def complete_stream(
     max_tokens: int | None = None,
     max_retries: int = 3,
     base_delay: float = 1.0,
+    trace_id: str = "",
 ) -> Iterator[str]:
     """统一的真实流式 LLM 入口。
 
@@ -425,7 +427,7 @@ def complete_stream(
                     if content:
                         emitted = True
                         yield str(content)
-            _record_usage(model, t0, last_chunk)
+            _record_usage(model, t0, last_chunk, trace_id=trace_id)
             return
         except _RETRYABLE as exc:
             last_err = exc
@@ -468,6 +470,7 @@ async def _acomplete_unbounded(
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_concurrency: int | None = None,
+    trace_id: str = "",
 ) -> str:
     """异步重试核心；每次真实尝试都经过 RPM + Semaphore 双门。"""
 
@@ -489,7 +492,7 @@ async def _acomplete_unbounded(
                     temperature=resolved_temperature,
                     max_tokens=resolved_tokens,
                 )
-            _record_usage(resolved_model, t0, response)
+            _record_usage(resolved_model, t0, response, trace_id=trace_id)
             return response.choices[0].message.content or ""
         except _RETRYABLE as exc:
             last_err = exc
@@ -509,6 +512,7 @@ async def acomplete(
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_concurrency: int | None = None,
+    trace_id: str = "",
 ) -> str:
     """带全局有界并发门的异步 LLM 调用。"""
 
@@ -521,6 +525,7 @@ async def acomplete(
         max_retries=max_retries,
         base_delay=base_delay,
         max_concurrency=max_concurrency,
+        trace_id=trace_id,
     )
 
 
@@ -535,6 +540,7 @@ async def acomplete_batch(
     base_delay: float = 1.0,
     max_concurrency: int | None = None,
     return_exceptions: bool = False,
+    trace_id: str = "",
 ) -> AsyncBatchResult[str]:
     """批量异步调用；Semaphore 只限制真实在途 API 请求。"""
 
@@ -550,6 +556,7 @@ async def acomplete_batch(
             max_retries=max_retries,
             base_delay=base_delay,
             max_concurrency=max_concurrency,
+            trace_id=trace_id,
         )
 
     return await gather_bounded(
@@ -569,6 +576,7 @@ async def acomplete_stream(
     max_retries: int = 3,
     base_delay: float = 1.0,
     max_concurrency: int | None = None,
+    trace_id: str = "",
 ) -> AsyncIterator[str]:
     """异步流式入口；整个流生命周期都占用一个 Semaphore 槽位。"""
 
@@ -607,7 +615,7 @@ async def acomplete_stream(
                     if content:
                         emitted = True
                         yield str(content)
-            _record_usage(resolved_model, t0, last_chunk)
+            _record_usage(resolved_model, t0, last_chunk, trace_id=trace_id)
             return
         except _RETRYABLE as exc:
             last_err = exc
@@ -620,7 +628,7 @@ async def acomplete_stream(
     raise LLMError(f"异步流式调用失败（重试{max_retries}次后放弃）: {last_err}")
 
 
-def _record_usage(model: str, t0: float, resp) -> None:
+def _record_usage(model: str, t0: float, resp, *, trace_id: str = "") -> None:
     """用量埋点：记录每次 LLM 调用的耗时 + token 数（失败静默）。"""
     try:
         from .usage import add_tokens, record
@@ -631,6 +639,7 @@ def _record_usage(model: str, t0: float, resp) -> None:
         add_tokens(prompt_tokens, completion_tokens)
         record(
             "llm_call",
+            trace_id=trace_id,
             backend=_backend(),
             model=model,
             latency_ms=latency_ms,

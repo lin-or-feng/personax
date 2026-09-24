@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from collections import defaultdict
@@ -117,6 +118,21 @@ def _rank(sources: list[str], expected: set[str]) -> int | None:
     return next((idx for idx, source in enumerate(sources, 1) if source in expected), None)
 
 
+def _ndcg(sources: list[str], expected: set[str], top_k: int) -> float:
+    """二元相关性 NDCG@K；支持一个问题对应多个正确来源。"""
+
+    if not expected or top_k < 1:
+        return 0.0
+    dcg = sum(
+        1.0 / math.log2(index + 1)
+        for index, source in enumerate(sources[:top_k], 1)
+        if source in expected
+    )
+    ideal_count = min(len(expected), top_k)
+    ideal = sum(1.0 / math.log2(index + 1) for index in range(1, ideal_count + 1))
+    return round(dcg / ideal, 4) if ideal else 0.0
+
+
 def _metric_slice(rows: list[dict[str, Any]]) -> dict[str, Any]:
     positives = [row for row in rows if row["answerable"]]
     negatives = [row for row in rows if not row["answerable"]]
@@ -136,6 +152,12 @@ def _metric_slice(rows: list[dict[str, Any]]) -> dict[str, Any]:
             sum(1.0 / row["rank"] if row["rank"] else 0.0 for row in positives)
             / positive_count,
             4,
+        ) if positive_count else None,
+        "ndcg_at_k": round(
+            sum(row["ndcg_at_k"] for row in positives) / positive_count, 4
+        ) if positive_count else None,
+        "gated_ndcg_at_k": round(
+            sum(row["gated_ndcg_at_k"] for row in positives) / positive_count, 4
         ) if positive_count else None,
         "no_hit_accuracy": round(
             sum(row["no_hit_ok"] for row in negatives) / negative_count, 4
@@ -195,6 +217,9 @@ def evaluate(
     min_mrr: float = 0.75,
     min_no_hit: float = 0.75,
     require_no_degradation: bool = True,
+    reranker: str | None = None,
+    reranker_model: str | None = None,
+    parent_context: bool = True,
 ) -> dict[str, Any]:
     if top_k < 1:
         raise ValueError("top_k 必须大于 0")
@@ -211,6 +236,9 @@ def evaluate(
         knowledge_dir,
         embedding_backend=embedding_backend,
         retrieval_mode=retrieval_mode,
+        reranker=reranker,
+        reranker_model=reranker_model,
+        parent_context=parent_context,
         environment_overrides=False,
     )
     latencies_ms: list[float] = []
@@ -264,6 +292,8 @@ def evaluate(
             "gated_retrieved": gated_sources,
             "rank": rank,
             "gated_rank": gated_rank,
+            "ndcg_at_k": _ndcg(ranked_sources, expected, top_k),
+            "gated_ndcg_at_k": _ndcg(gated_sources, expected, top_k),
             "no_hit_ok": no_hit_ok,
             "latency_ms": latency_ms,
             "top_k": top_k,
@@ -291,6 +321,8 @@ def evaluate(
         "dense_mode": last_trace.get("dense_mode", "unknown"),
         "fusion": last_trace.get("fusion", "rrf"),
         "reranker": last_trace.get("reranker", "none"),
+        "chunk_strategy": getattr(pipeline, "chunk_strategy", "unknown"),
+        "index_version": getattr(pipeline, "index_version", ""),
         "embedding_cache_hits": getattr(pipeline.store.embedder, "cache_hits", 0),
         "embedding_cache_misses": getattr(pipeline.store.embedder, "cache_misses", 0),
         "degraded_components": sorted(degraded_components),
@@ -300,7 +332,7 @@ def evaluate(
         },
     }
     return {
-        "schema_version": "2.3",
+        "schema_version": "2.7",
         "dataset": str(eval_path),
         "cases": len(cases),
         "positive_cases": metrics["positive_cases"],
@@ -312,6 +344,8 @@ def evaluate(
         "recall_at_k": recall_at_k,
         "gated_recall_at_k": gated_recall_at_k,
         "mrr": mrr,
+        "ndcg_at_k": metrics["ndcg_at_k"],
+        "gated_ndcg_at_k": metrics["gated_ndcg_at_k"],
         "no_hit_accuracy": no_hit_accuracy,
         "latency_ms": {
             "p50": _percentile(latencies_ms, 0.50),
@@ -349,13 +383,14 @@ def compare_modes(**kwargs: Any) -> dict[str, Any]:
         candidates,
         key=lambda mode: (
             reports[mode]["gated_recall_at_k"],
+            reports[mode]["gated_ndcg_at_k"],
             reports[mode]["mrr"],
             reports[mode]["no_hit_accuracy"] or 0.0,
             -reports[mode]["latency_ms"]["p95"],
         ),
     )
     return {
-        "schema_version": "2.3",
+        "schema_version": "2.7",
         "kind": "retrieval_ablation",
         "winner": winner,
         "passed": reports["hybrid"]["passed"],
@@ -363,20 +398,72 @@ def compare_modes(**kwargs: Any) -> dict[str, Any]:
     }
 
 
+def compare_rerankers(**kwargs: Any) -> dict[str, Any]:
+    """固定召回链路，对比 RRF 基线与 Cross-Encoder 重排。"""
+
+    reports = {
+        "rrf": evaluate(reranker="none", **kwargs),
+        "cross_encoder": evaluate(reranker="cross-encoder", **kwargs),
+    }
+    winner = max(
+        reports,
+        key=lambda name: (
+            reports[name]["gated_recall_at_k"],
+            reports[name]["gated_ndcg_at_k"],
+            reports[name]["mrr"],
+            reports[name]["no_hit_accuracy"] or 0.0,
+            -reports[name]["latency_ms"]["p95"],
+        ),
+    )
+    cross_trace = reports["cross_encoder"]["trace"]
+    available = "reranker" not in cross_trace["degraded_components"]
+    return {
+        "schema_version": "2.7",
+        "kind": "reranker_ablation",
+        "winner": winner,
+        "cross_encoder_available": available,
+        "passed": reports["rrf"]["passed"] and reports["cross_encoder"]["passed"],
+        "reports": reports,
+    }
+
+
 def render_markdown(report: dict[str, Any]) -> str:
+    if report.get("kind") == "reranker_ablation":
+        lines = [
+            "# PersonaX Cross-Encoder 消融报告",
+            "",
+            "| 重排方式 | 门控 Recall@K | 门控 NDCG@K | MRR | 无答案拒检 | P95(ms) | 门禁 |",
+            "|---|---:|---:|---:|---:|---:|---|",
+        ]
+        for name in ("rrf", "cross_encoder"):
+            row = report["reports"][name]
+            lines.append(
+                f"| {name} | {row['gated_recall_at_k']:.4f} | "
+                f"{row['gated_ndcg_at_k']:.4f} | {row['mrr']:.4f} | "
+                f"{row['no_hit_accuracy'] if row['no_hit_accuracy'] is not None else 'n/a'} | "
+                f"{row['latency_ms']['p95']:.1f} | {'通过' if row['passed'] else '未通过'} |"
+            )
+        lines.extend([
+            "",
+            f"综合最优：**{report['winner']}**；Cross-Encoder "
+            f"{'可用' if report['cross_encoder_available'] else '已降级'}。",
+            "",
+        ])
+        return "\n".join(lines)
     if report.get("kind") == "retrieval_ablation":
         lines = [
             "# PersonaX RAG 消融报告",
             "",
-            "| 模式 | Recall@K | 门控 Recall@K | MRR | 无答案拒检 | P95(ms) | 门禁 |",
-            "|---|---:|---:|---:|---:|---:|---|",
+            "| 模式 | Recall@K | 门控 Recall@K | 门控 NDCG@K | MRR | 无答案拒检 | P95(ms) | 门禁 |",
+            "|---|---:|---:|---:|---:|---:|---:|---|",
         ]
         for mode in SUPPORTED_MODES:
             row = report["reports"][mode]
             no_hit = row["no_hit_accuracy"]
             lines.append(
                 f"| {mode} | {row['recall_at_k']:.4f} | "
-                f"{row['gated_recall_at_k']:.4f} | {row['mrr']:.4f} | "
+                f"{row['gated_recall_at_k']:.4f} | {row['gated_ndcg_at_k']:.4f} | "
+                f"{row['mrr']:.4f} | "
                 f"{no_hit if no_hit is not None else 'n/a'} | "
                 f"{row['latency_ms']['p95']:.1f} | "
                 f"{'通过' if row['passed'] else '未通过'} |"
@@ -392,6 +479,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- 检索：{report['retrieval_mode']} + {report['embedding_backend']}，Top-K={report['top_k']}",
         f"- Recall@K：{report['recall_at_k']:.4f}",
         f"- 门控 Recall@K：{report['gated_recall_at_k']:.4f}",
+        f"- NDCG@K / 门控 NDCG@K：{report['ndcg_at_k']:.4f} / "
+        f"{report['gated_ndcg_at_k']:.4f}",
         f"- MRR：{report['mrr']:.4f}",
         f"- 无答案拒检准确率：{no_hit if no_hit is not None else 'n/a'}",
         f"- P50 / P95 / P99：{report['latency_ms']['p50']:.1f} / "
@@ -430,7 +519,7 @@ def write_report(report: dict[str, Any], *, json_path: str = "", markdown_path: 
 def compact_report(report: dict[str, Any]) -> dict[str, Any]:
     """移除逐条明细，避免 CI 日志被 120 条样例淹没。"""
 
-    if report.get("kind") == "retrieval_ablation":
+    if report.get("kind") in {"retrieval_ablation", "reranker_ablation"}:
         compact = dict(report)
         compact["reports"] = {
             mode: {key: value for key, value in child.items() if key != "details"}
@@ -453,6 +542,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--mode", choices=SUPPORTED_MODES, default="hybrid")
     parser.add_argument("--compare", action="store_true", help="依次比较 BM25、dense、hybrid")
+    parser.add_argument(
+        "--compare-reranker", action="store_true",
+        help="固定当前召回模式，对比 RRF 与 Cross-Encoder（需要 sentence-transformers）",
+    )
+    parser.add_argument("--reranker-model", default="BAAI/bge-reranker-base")
+    parser.add_argument(
+        "--flat-chunks", action="store_true",
+        help="关闭 2.5 标题感知父子 Chunk，用旧版固定切块做对照",
+    )
     parser.add_argument(
         "--min-score",
         type=float,
@@ -483,11 +581,20 @@ def main() -> None:
         "min_mrr": args.min_mrr,
         "min_no_hit": args.min_no_hit,
         "require_no_degradation": not args.allow_degraded,
+        "parent_context": not args.flat_chunks,
     }
-    report = compare_modes(**kwargs) if args.compare else evaluate(
-        retrieval_mode=args.mode,
-        **kwargs,
-    )
+    if args.compare and args.compare_reranker:
+        raise SystemExit("--compare 与 --compare-reranker 不能同时使用")
+    if args.compare:
+        report = compare_modes(**kwargs)
+    elif args.compare_reranker:
+        report = compare_rerankers(
+            retrieval_mode=args.mode,
+            reranker_model=args.reranker_model,
+            **kwargs,
+        )
+    else:
+        report = evaluate(retrieval_mode=args.mode, **kwargs)
     write_report(report, json_path=args.report_json, markdown_path=args.report_md)
     printable = compact_report(report) if args.summary_only else report
     print(json.dumps(printable, ensure_ascii=False, indent=2))

@@ -1,7 +1,7 @@
-"""PersonaX 对话助手离线回归评测。
+"""PersonaX 2.6 对话助手离线回归评测。
 
 不调用真实 LLM，不依赖 Ollama；用于验证路由、引用编号、无证据声明、
-步数上限和回答完整性。语义事实支持度需要另行使用人工集或 Judge 评测。
+词法事实支持度、步数上限和回答完整性。完整语义事实性仍需人工或 Judge。
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from core.assistant import AssistantOrchestrator
+from core.grounding import evaluate_answer_grounding
 from core.rag import Chunk, RAGPipeline, VectorStore
 from core.types import AssistantRequest
 
@@ -39,7 +40,13 @@ def _offline_pipeline() -> RAGPipeline:
 
 def _fake_complete(prompt: str, **kwargs) -> str:
     if "<untrusted_knowledge_json>" in prompt:
-        return "根据本地资料，可以从职责、状态和可观测性三个方面理解 [1]。"
+        raw = prompt.split("<untrusted_knowledge_json>", 1)[1].split(
+            "</untrusted_knowledge_json>", 1,
+        )[0].strip()
+        sources = json.loads(raw)
+        if sources:
+            excerpt = str(sources[0]["excerpt"]).rstrip("。！？!?；; ")
+            return f"本地资料说明：{excerpt} [1]。"
     return "这是一个不需要本地知识库的直接回答。"
 
 
@@ -74,6 +81,12 @@ def run() -> dict:
         citation_valid = all(
             1 <= value <= len(response.sources) for value in citation_numbers
         )
+        grounding = evaluate_answer_grounding(response.answer, response.sources)
+        cited_claims = [item for item in grounding.claims if item.citations]
+        grounding_ok = (
+            all(item.supported for item in cited_claims)
+            and (not case["citation_required"] or bool(cited_claims))
+        )
         expects_no_evidence = bool(case.get("expect_no_evidence", False))
         no_evidence_ok = (not expects_no_evidence) or (
             not response.sources
@@ -86,6 +99,7 @@ def run() -> dict:
             "route_ok": route_ok,
             "citation_ok": citation_ok,
             "citation_valid": citation_valid,
+            "grounding_ok": grounding_ok,
             "no_evidence_ok": no_evidence_ok,
             "bounded": bounded,
             "answered": answered,
@@ -101,11 +115,12 @@ def run() -> dict:
         if case.get("expect_no_evidence", False)
     ]
     summary = {
-        "schema_version": "2.3",
+        "schema_version": "2.6",
         "cases": len(rows),
         "route_accuracy": sum(row["route_ok"] for row in rows) / total,
         "citation_coverage": sum(row["citation_ok"] for row in rows) / total,
         "citation_validity": sum(row["citation_valid"] for row in rows) / total,
+        "grounding_support_rate": sum(row["grounding_ok"] for row in rows) / total,
         "no_evidence_disclosure_rate": (
             sum(row["no_evidence_ok"] for row in no_evidence_rows)
             / len(no_evidence_rows)
@@ -118,6 +133,7 @@ def run() -> dict:
                 "route_ok",
                 "citation_ok",
                 "citation_valid",
+                "grounding_ok",
                 "no_evidence_ok",
                 "bounded",
                 "answered",

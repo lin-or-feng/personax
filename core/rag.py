@@ -15,6 +15,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 import urllib.request
 from array import array
 from collections import Counter
@@ -31,6 +32,13 @@ class Chunk:
     hypothetical_questions: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     embedding: list[float] = field(default_factory=list)
+
+    @property
+    def context_text(self) -> str:
+        """检索使用子块，生成阶段可展开到标题完整的父块。"""
+
+        parent = str((self.metadata or {}).get("parent_text") or "").strip()
+        return parent or self.text
 
 
 @dataclass
@@ -436,6 +444,8 @@ class RAGPipeline:
             )
         self.retrieval_mode = normalized_mode
         self.last_trace: dict[str, Any] = {}
+        self.index_version = ""
+        self.chunk_strategy = "fixed_overlap"
 
     def multi_query(self, query: str, n: int = 3) -> list[str]:
         return self.enhancer.rewrite(query, n=n)
@@ -544,6 +554,8 @@ class RAGPipeline:
             "embedding_cache_misses": getattr(self.store.embedder, "cache_misses", 0),
             "degraded_components": degraded_components,
             "degradation_reasons": degradation_reasons,
+            "index_version": self.index_version,
+            "chunk_strategy": self.chunk_strategy,
         }
         return hits
 
@@ -582,6 +594,7 @@ def resolve_min_score(config: dict[str, Any], pipeline: RAGPipeline) -> float:
 
 _FRONT_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 _PIPE_CACHE: dict[tuple[Any, ...], RAGPipeline] = {}
+_PIPE_CACHE_LOCK = threading.RLock()
 
 
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -617,6 +630,26 @@ def _split_text(text: str, chunk_size: int = 600, overlap: int = 80) -> list[str
     return [chunk for chunk in chunks if chunk]
 
 
+def _split_markdown_sections(text: str) -> list[tuple[str, str]]:
+    """按 Markdown 标题形成父块；无标题文档退化为整篇父块。"""
+
+    sections: list[tuple[str, str]] = []
+    heading = ""
+    buffer: list[str] = []
+    for line in text.splitlines():
+        match = re.match(r"^\s{0,3}#{1,6}\s+(.+?)\s*$", line)
+        if match:
+            if buffer and any(item.strip() for item in buffer):
+                sections.append((heading, "\n".join(buffer).strip()))
+            heading = match.group(1).strip()
+            buffer = [line]
+        else:
+            buffer.append(line)
+    if buffer and any(item.strip() for item in buffer):
+        sections.append((heading, "\n".join(buffer).strip()))
+    return sections or [("", text.strip())]
+
+
 def _make_embedder(backend: str, model: str) -> Embedder:
     if backend == "ollama":
         # 聊天后端使用 OpenAI 兼容地址 `/v1`，embedding 则调用 Ollama
@@ -638,6 +671,7 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
                        reranker: str | None = None,
                        reranker_model: str | None = None,
                        retrieval_mode: str | None = None,
+                       parent_context: bool = True,
                        environment_overrides: bool = True) -> RAGPipeline:
     """从 Markdown 目录构建并按文件指纹缓存混合索引。"""
     path = Path(dir_path)
@@ -653,10 +687,17 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
     mode = (env("RAG_RETRIEVAL_MODE") or retrieval_mode or "hybrid").lower()
     files = sorted(path.rglob("*.md")) if path.exists() else []
     signature = tuple((str(f.resolve()), f.stat().st_mtime_ns, f.stat().st_size) for f in files)
-    cache_key = (signature, chunk_size, backend, model,
-                 enhancer_name, hyde, reranker_name, rerank_model, mode)
-    if cache_key in _PIPE_CACHE:
-        return _PIPE_CACHE[cache_key]
+    index_version = hashlib.sha256(
+        json.dumps(signature, ensure_ascii=False, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    cache_family = (
+        str(path.resolve()), chunk_size, backend, model,
+        enhancer_name, hyde, reranker_name, rerank_model, mode, parent_context,
+    )
+    cache_key = (cache_family, signature)
+    with _PIPE_CACHE_LOCK:
+        if cache_key in _PIPE_CACHE:
+            return _PIPE_CACHE[cache_key]
 
     embedder: Embedder = _make_embedder(backend, model)
     cache_enabled = os.getenv("RAG_EMBEDDING_CACHE", "1") != "0"
@@ -679,6 +720,8 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
         enable_hyde=hyde,
         retrieval_mode=mode,
     )
+    pipe.index_version = index_version
+    pipe.chunk_strategy = "heading_parent_child" if parent_context else "fixed_overlap"
 
     pending_chunks: list[Chunk] = []
     for file_index, file_path in enumerate(files):
@@ -695,24 +738,40 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
         keywords = meta.get("keywords") or []
         if isinstance(keywords, str):
             keywords = [item.strip() for item in keywords.split(",")]
-        for chunk_index, part in enumerate(_split_text(body or raw_text, chunk_size=chunk_size)):
-            pending_chunks.append(Chunk(
-                id=f"kb-{file_index}-{chunk_index}",
-                text=part,
-                summary=topic,
-                hypothetical_questions=[f"关于{topic}有哪些经验和避坑建议"] if topic else [],
-                metadata={
-                    "source": file_path.relative_to(path).as_posix(),
-                    "topic": topic,
-                    "style": str(meta.get("style") or ""),
-                    "keywords": [str(item) for item in keywords],
-                    "retrieval_role": str(meta.get("retrieval_role") or "example"),
-                    "source_name": str(meta.get("source") or ""),
-                    "source_url": str(meta.get("source_url") or ""),
-                    "license": str(meta.get("license") or ""),
-                    "chunk_index": chunk_index,
-                },
-            ))
+        document_version = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()[:16]
+        sections = (
+            _split_markdown_sections(body or raw_text)
+            if parent_context else [("", body or raw_text)]
+        )
+        source_path = file_path.relative_to(path).as_posix()
+        for parent_index, (heading, parent_text) in enumerate(sections):
+            for chunk_index, part in enumerate(
+                _split_text(parent_text, chunk_size=chunk_size)
+            ):
+                pending_chunks.append(Chunk(
+                    id=f"kb-{file_index}-{parent_index}-{chunk_index}",
+                    text=part,
+                    summary=heading or topic,
+                    hypothetical_questions=[
+                        f"关于{heading or topic}有哪些经验和避坑建议"
+                    ] if (heading or topic) else [],
+                    metadata={
+                        "source": source_path,
+                        "topic": topic,
+                        "style": str(meta.get("style") or ""),
+                        "keywords": [str(item) for item in keywords],
+                        "retrieval_role": str(meta.get("retrieval_role") or "example"),
+                        "source_name": str(meta.get("source") or ""),
+                        "source_url": str(meta.get("source_url") or ""),
+                        "license": str(meta.get("license") or ""),
+                        "document_version": document_version,
+                        "index_version": index_version,
+                        "parent_id": f"{source_path}#section-{parent_index}",
+                        "parent_heading": heading,
+                        "parent_text": parent_text if parent_context else "",
+                        "chunk_index": chunk_index,
+                    },
+                ))
     if pipe.retrieval_mode == "lexical":
         # BM25 消融不应因为本地 embedding 服务不可用而无法建索引。
         store.chunks.update({chunk.id: chunk for chunk in pending_chunks})
@@ -724,5 +783,9 @@ def build_rag_from_dir(dir_path: str | Path, *, chunk_size: int = 600,
             store.chunks.update({chunk.id: chunk for chunk in pending_chunks})
     # 失败索引不进入进程级缓存；Ollama 恢复后下一次构建可自动重试 dense。
     if not store.last_index_error:
-        _PIPE_CACHE[cache_key] = pipe
+        # 新索引完整构建后才原子替换缓存；失败构建不会污染旧实例。
+        with _PIPE_CACHE_LOCK:
+            for stale_key in [key for key in _PIPE_CACHE if key[0] == cache_family]:
+                _PIPE_CACHE.pop(stale_key, None)
+            _PIPE_CACHE[cache_key] = pipe
     return pipe

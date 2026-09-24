@@ -8,6 +8,8 @@
   login     浏览器登录一次，导出登录态 storage_state.json
   eval      跑评测集，输出 eval_results.csv
   rag-eval  跑可复现的 RAG Recall/MRR 质量门禁
+  telemetry 查看安全遥测聚合或指定 Trace
+  feedback  查看反馈聚合并导出待人工标注候选
 
 示例：
   python main.py generate --topic "秋招穿搭"
@@ -316,7 +318,9 @@ def cmd_eval(args):
 
 def cmd_rag_eval(args):
     """运行 RAG 质量门禁；返回码可直接用于 CI。"""
-    from eval.rag_scorer import compact_report, compare_modes, evaluate, write_report
+    from eval.rag_scorer import (
+        compact_report, compare_modes, compare_rerankers, evaluate, write_report,
+    )
 
     kwargs = dict(
         eval_path=args.eval_set,
@@ -328,11 +332,20 @@ def cmd_rag_eval(args):
         min_mrr=args.min_mrr,
         min_no_hit=args.min_no_hit,
         require_no_degradation=not args.allow_degraded,
+        parent_context=not args.flat_chunks,
     )
-    report = compare_modes(**kwargs) if args.compare else evaluate(
-        retrieval_mode=args.mode,
-        **kwargs,
-    )
+    if args.compare and args.compare_reranker:
+        raise SystemExit("--compare 与 --compare-reranker 不能同时使用")
+    if args.compare:
+        report = compare_modes(**kwargs)
+    elif args.compare_reranker:
+        report = compare_rerankers(
+            retrieval_mode=args.mode,
+            reranker_model=args.reranker_model,
+            **kwargs,
+        )
+    else:
+        report = evaluate(retrieval_mode=args.mode, **kwargs)
     write_report(
         report,
         json_path=args.report_json,
@@ -341,6 +354,44 @@ def cmd_rag_eval(args):
     printable = compact_report(report) if args.summary_only else report
     print(json.dumps(printable, ensure_ascii=False, indent=2))
     raise SystemExit(0 if report["passed"] else 1)
+
+
+def cmd_telemetry(args):
+    """输出不含提示词、正文和工具参数的遥测聚合。"""
+    from core.observability import (
+        aggregate_usage,
+        load_usage_events,
+        safe_event_rows,
+        trace_events,
+    )
+
+    events, malformed = load_usage_events(args.path, limit=args.limit)
+    payload = aggregate_usage(events, malformed_lines=malformed).model_dump(mode="json")
+    if args.trace_id:
+        payload["trace_events"] = safe_event_rows(trace_events(events, args.trace_id))
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def cmd_feedback(args):
+    """查看反馈聚合；候选仅包含用户显式同意保留的脱敏内容。"""
+    from pathlib import Path
+
+    from core.feedback import AssistantFeedbackStore
+
+    store = AssistantFeedbackStore(args.path)
+    candidates = store.export_eval_candidates()
+    payload = {
+        "summary": store.summary().model_dump(mode="json"),
+        "candidates": candidates,
+    }
+    rendered = json.dumps(payload, ensure_ascii=False, indent=2)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(rendered + "\n", encoding="utf-8")
+        print(f"已导出 {len(candidates)} 条待人工标注候选：{output_path}")
+    else:
+        print(rendered)
 
 
 def main():
@@ -461,6 +512,11 @@ def main():
     p_rag_eval.add_argument("--mode", choices=["bm25", "dense", "hybrid"], default="hybrid")
     p_rag_eval.add_argument("--compare", action="store_true",
                             help="依次运行 BM25、dense、hybrid 消融对比")
+    p_rag_eval.add_argument("--compare-reranker", action="store_true",
+                            help="比较 RRF 基线与 Cross-Encoder 重排")
+    p_rag_eval.add_argument("--reranker-model", default="BAAI/bge-reranker-base")
+    p_rag_eval.add_argument("--flat-chunks", action="store_true",
+                            help="关闭标题感知父子 Chunk，使用旧版固定切块对照")
     p_rag_eval.add_argument(
         "--min-score",
         type=float,
@@ -475,6 +531,19 @@ def main():
     p_rag_eval.add_argument("--report-md", default="")
     p_rag_eval.add_argument("--summary-only", action="store_true")
     p_rag_eval.set_defaults(func=cmd_rag_eval)
+
+    # telemetry（安全聚合与端到端 Trace）
+    p_telemetry = sub.add_parser("telemetry", help="查看工具成功率、P95、Token 与 Trace")
+    p_telemetry.add_argument("--path", default="logs/usage.jsonl")
+    p_telemetry.add_argument("--limit", type=int, default=5_000)
+    p_telemetry.add_argument("--trace-id", default="")
+    p_telemetry.set_defaults(func=cmd_telemetry)
+
+    # feedback（真实失败样例闭环）
+    p_feedback = sub.add_parser("feedback", help="查看反馈聚合并导出评测候选")
+    p_feedback.add_argument("--path", default="logs/assistant_feedback.sqlite3")
+    p_feedback.add_argument("--output", default="", help="可选 JSON 输出路径")
+    p_feedback.set_defaults(func=cmd_feedback)
 
     argv = sys.argv[1:]
 

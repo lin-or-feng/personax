@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: personax:2.3.1
+    image: personax:2.8.1
     init: true
     read_only: true
     ports:
@@ -17,6 +17,8 @@ services:
       LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b}"
       LLM_MAX_CONCURRENCY: "${LLM_MAX_CONCURRENCY:-1}"
       LLM_REQUESTS_PER_MINUTE: "${LLM_REQUESTS_PER_MINUTE:-60}"
+      LLM_INPUT_COST_CNY_PER_MILLION: "${LLM_INPUT_COST_CNY_PER_MILLION:-0}"
+      LLM_OUTPUT_COST_CNY_PER_MILLION: "${LLM_OUTPUT_COST_CNY_PER_MILLION:-0}"
       OLLAMA_BASE_URL: "${PERSONAX_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
       RAG_OLLAMA_BASE_URL: "${PERSONAX_RAG_OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
       RAG_EMBEDDING_BACKEND: "${RAG_EMBEDDING_BACKEND:-hashing}"
@@ -47,6 +49,76 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: personax:2.8.1
+    init: true
+    read_only: true
+    command:
+      - python
+      - -m
+      - uvicorn
+      - api:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - "1"
+    ports:
+      # 无 Token 时只应绑定本机；若改为局域网地址，必须同时设置 PERSONAX_API_TOKEN。
+      - "${PERSONAX_API_BIND_HOST:-127.0.0.1}:${PERSONAX_API_PORT:-8000}:8000"
+    environment:
+      LLM_BACKEND: "${LLM_BACKEND:-offline}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5:7b}"
+      LLM_MAX_CONCURRENCY: "${LLM_MAX_CONCURRENCY:-1}"
+      LLM_REQUESTS_PER_MINUTE: "${LLM_REQUESTS_PER_MINUTE:-60}"
+      OLLAMA_BASE_URL: "${PERSONAX_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}"
+      RAG_OLLAMA_BASE_URL: "${PERSONAX_RAG_OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+      RAG_EMBEDDING_BACKEND: "${RAG_EMBEDDING_BACKEND:-hashing}"
+      RAG_EMBEDDING_MODEL: "${RAG_EMBEDDING_MODEL:-bge-m3}"
+      RAG_EMBEDDING_CACHE: "1"
+      RAG_EMBEDDING_CACHE_PATH: "/app/.rag_cache/embeddings.sqlite3"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_TIMEOUT: "${DEEPSEEK_TIMEOUT:-30}"
+      PERSONAX_API_TOKEN: "${PERSONAX_API_TOKEN:-}"
+      PERSONAX_API_REQUESTS_PER_MINUTE: "${PERSONAX_API_REQUESTS_PER_MINUTE:-60}"
+      PERSONAX_ASSISTANT_DB: "/app/logs/assistant_checkpoints.sqlite3"
+      # API 永远不提供发布路由；同时固定关闭底层真实发布安全锁。
+      XHS_REAL_PUBLISH_ENABLED: "0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - personax_logs:/app/logs
+      - personax_rag_cache:/app/.rag_cache
+      - personax_knowledge:/app/knowledge
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
     logging:
       driver: json-file
       options:

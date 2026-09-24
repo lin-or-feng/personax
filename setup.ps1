@@ -8,7 +8,7 @@ Write-Host "======================================" -ForegroundColor Cyan
 Write-Host " PersonaX 环境安装（1/3 → 3/3）" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
 
-Write-Host "`n[1/3] 安装核心依赖（openai/pydantic/pyyaml/langgraph）..." -ForegroundColor Yellow
+Write-Host "`n[1/3] 安装核心依赖（openai/pydantic/langgraph/fastapi）..." -ForegroundColor Yellow
 python -m pip install -e .
 
 Write-Host "`n[2/3] 安装 Playwright（真实发布浏览器驱动）..." -ForegroundColor Yellow
@@ -35,6 +35,9 @@ Write-Host ""
 Write-Host "  （可选）可视化工作台（生成/编辑/检验/定时发布）："
 Write-Host "  python -m pip install streamlit"
 Write-Host "  python -m streamlit run app.py"
+Write-Host ""
+Write-Host "  （可选）前台启动本地 API（不会隐藏运行或开机自启）："
+Write-Host "  python -m uvicorn api:app --host 127.0.0.1 --port 8000 --workers 1"
 Write-Host ""
 Write-Host "（可选）配置 DeepSeek 真实写作："
 Write-Host "  PowerShell:  `$env:DEEPSEEK_API_KEY = `"sk-你的key`""

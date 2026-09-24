@@ -32,6 +32,18 @@ def test_compose_has_safe_defaults_and_persistent_state():
     assert "personax_rag_cache:/app/.rag_cache" in mounts
     assert "personax_knowledge:/app/knowledge" in mounts
 
+    api = compose["services"]["api"]
+    assert api["profiles"] == ["api"]
+    assert api["ports"] == [
+        "${PERSONAX_API_BIND_HOST:-127.0.0.1}:${PERSONAX_API_PORT:-8000}:8000",
+    ]
+    assert api["environment"]["XHS_REAL_PUBLISH_ENABLED"] == "0"
+    assert "PERSONAX_API_TOKEN" in api["environment"]
+    assert api["command"][-2:] == ["--workers", "1"]
+    assert "restart" not in api
+    assert api["read_only"] is True
+    assert api["cap_drop"] == ["ALL"]
+
 
 def test_docker_build_context_excludes_secrets():
     ignored = {

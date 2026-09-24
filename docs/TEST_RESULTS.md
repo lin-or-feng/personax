@@ -171,10 +171,98 @@
 
 Docker 默认只复现生成、对话、RAG、评测和 Streamlit 工作台，真实发布安全锁固定关闭，不包含浏览器登录态。本轮已完成当前 Windows 主机的真实镜像构建与健康检查，但不能替代第二台机器的跨机验收。
 
+## 阶段 11：PersonaX 2.4 持久化 HITL 与安全运行时
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 跨重启审批 | `test_publish_approval_survives_restart_invalidates_edits_and_is_consumed` | LangGraph interrupt 写入 SQLite；新 Store 实例可 resume；草稿变更被拒绝；发布成功转为 consumed |
+| 审批缺失阻断 | `test_real_publish_rejects_missing_persisted_approval` | 开启严格模式但缺少审批时，在登录态和浏览器操作前抛出受控拒绝 |
+| Agent 四重预算 | `test_agent_budget_blocks_loops_steps_and_token_overflow` | 重复状态循环与估算 Token 超限均被中止；步骤/总超时使用同一预算对象 |
+| 工具重试与输出预算 | `test_tool_gateway_retries_transient_error_and_bounds_output` | ConnectionError 第 3 次成功；attempts、trace_id 完整；输出严格裁剪至 500 字符 |
+| 确定性安全红队 | `python -m eval.security_scorer --summary-only` | 16/16 通过：知识/记忆边界、危险 URL、未知工具、PII 共 5 类 |
+| Streamlit 冒烟 | `streamlit.testing.v1.AppTest` | 0 个页面异常 |
+
+审批与发布测试只替换了最终平台动作，不启动 Playwright、不登录、不真实发布。真实发布后端会重新校验审批，不信任前端 Session State。
+
+## 阶段 12：PersonaX 2.5 父子检索与记忆治理
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 父子 Chunk 回归 | 120 条 hashing hybrid，Top-5 | Recall@5=0.8889；门控 Recall@5=0.8056；MRR=0.7775；负例拒检=0.75；无降级；门禁通过 |
+| 旧切块对照 | 同参数加 `--flat-chunks` | 四项质量指标与父子 Chunk 完全一致；两次单跑的延迟仅作冒烟，不用于性能结论 |
+| 版本与上下文 | `test_heading_parent_child_chunks_keep_versions_and_expand_context` | 子块保留文档/索引版本和父段元数据；命中后可展开完整父段 |
+| 索引失败恢复 | `test_failed_index_is_not_cached_and_can_recover` | embedding 构建失败实例不缓存；服务恢复后相同知识目录可重建成功 |
+| 记忆治理 | TTL/PII/摘要候选/导出/删除测试 | 常见 PII 被掩码，过期记忆不返回；摘要只生成候选；导出和删除全部通过 |
+| 完整发布门禁 | `python scripts/release_check.py` | 134 单测、3/3 稿件合规、298 文件密钥扫描、16/16 红队、12/12 助手、120 条 RAG 全部通过，58.41s |
+| CI 覆盖率命令 | `pytest --cov=core --cov=publishers --cov-fail-under=55` | 133 passed；总覆盖率 68.76%，超过 55% 门槛；新增消融逻辑测试后总数为 134 |
+| Python 与差异格式 | `compileall` + `git diff --check` | 通过 |
+
+Cross-Encoder 消融入口已经实现，但本轮没有下载新的重排模型，因此不记录或冒充 Cross-Encoder 效果。待用户选择模型并确认磁盘预算后，应运行 `main.py rag-eval --compare-reranker` 生成独立报告。
+
+## 阶段 13：PersonaX 2.6 可信回答与端到端可观测
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 答案支持度固定集 | `python -m eval.grounding_scorer --summary-only` | 16 条通过；Accuracy=1.0，unsupported recall=1.0，阈值分别为 0.90/0.85 |
+| 助手端到端回归 | `python -m eval.assistant_scorer` | 12/12 通过；路由、引用覆盖/有效性、词法支持度、无证据声明、步数与回答率均为 1.0；仅预期的无证据样例降级 |
+| Trace 贯通 | `test_tool_and_llm_telemetry_share_trace_id` / `test_assistant_passes_trace_id_to_router_and_answer_model` | 路由/回答 LLM、工具调用与回复共用同一 Trace；遥测不含 query、提示词、正文和工具参数 |
+| 遥测聚合 | `test_observability_aggregates_quality_latency_tokens_and_cost` | 工具成功率、助手降级率、Token、可配置成本及 P95 口径通过；损坏/超长行安全跳过 |
+| Streamlit 状态页 | `streamlit.testing.v1.AppTest`，`nav=observability` | 0 个页面异常；可显示安全聚合、指定 Trace 与最近事件 |
+| CLI 冒烟 | `python main.py telemetry --limit 10` | 正常输出结构化聚合；未配置单价时 `pricing_configured=false` |
+| 完整发布门禁 | `python scripts/release_check.py` | 七道门禁全部通过：143 单测、3/3 稿件合规、309 文件密钥扫描、16/16 红队、16 条支持度、12/12 助手、120 条 RAG；40.83s |
+| 覆盖率门禁 | `pytest --cov=core --cov=publishers --cov-fail-under=55` | 143 passed；总覆盖率 70.03%，超过 55% 下限；`grounding.py` 99%，`observability.py` 94% |
+
+本阶段所有测试均为本地只读或模拟验证；没有登录平台、启动 Playwright 或执行真实发布。Token 成本来自用户配置单价的估算，不是供应商账单。
+
+## 阶段 14：PersonaX 2.7 真实反馈与排序实验闭环
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| 反馈最小化与幂等 | `test_feedback_is_idempotent_per_trace_and_exports_only_opted_in_failures` | 同一 Trace 更新而不重复插入；默认不导出正文；显式同意的负反馈进入候选 |
+| 脱敏与安全扫描 | 手机号、邮箱、`sk-` 测试夹具 + `check_secrets.py --strict` | 写入前完成 PII/凭据掩码；首次门禁发现源码中的完整假 Key 后改为运行时拼接，最终 316 文件扫描无可提交危险项 |
+| 反馈聚合与删除 | `test_feedback_summary_does_not_require_stored_conversation_content` | 有帮助率、原因计数、候选数正确；全部反馈可删除且清零 |
+| NDCG 单元回归 | `test_ndcg_rewards_all_relevant_sources_and_ranking_order` | 多个正确来源全部前置时 NDCG=1.0；延迟排序按折损位置得到 0.6934 |
+| RAG 120 条基线 | hashing hybrid，Top-5，`min_score=0.15` | Recall@5=0.8889；门控 Recall@5=0.8056；MRR=0.7775；NDCG@5=0.8049；门控 NDCG@5=0.7710；拒检=0.75 |
+| Streamlit 页面 | `AppTest`：状态页 + 注入带 Trace 的助手回答 | 两页均 0 异常；助手页面检测到 1 个原生 feedback 控件 |
+| CLI 冒烟 | `python main.py feedback` | 无反馈时输出结构化空聚合和候选数组，不创建可提交数据文件 |
+| 完整发布门禁 | `python scripts/release_check.py` | 七道门禁全部通过：147 单测、3/3 稿件合规、316 文件密钥扫描、16/16 红队、16 条支持度、12/12 助手、120 条 RAG；42.84s |
+| 覆盖率门禁 | `pytest --cov=core --cov=publishers --cov-fail-under=55` | 147 passed；总覆盖率 70.68%，`core/feedback.py` 89%，超过 55% 下限 |
+
+本轮没有安装或下载 Cross-Encoder，因此只记录 RRF 基线新增的 NDCG，不声称重排模型带来提升。所有反馈测试使用临时 SQLite；没有登录平台、启动 Playwright 或真实发布。
+
+## 阶段 15：PersonaX 2.8 FastAPI / SSE 服务边界
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| API 专项与相关回归 | `pytest tests/test_api.py tests/test_assistant.py tests/test_docker_deployment.py` | 30 passed；覆盖 health/ready、JSON、SSE、Bearer、API 全局 RPM、输入上限、错误脱敏、无发布路由、RAG 并发单例和 Compose 安全默认值 |
+| 完整单元测试 | `pytest` | 156 passed，0 failed，21.00s（发布门禁内） |
+| 依赖与语法 | `pip check` + `compileall api.py core tests` | 无损坏依赖；Python 编译通过 |
+| 原生 Uvicorn 冒烟 | `uvicorn api:app --host 127.0.0.1 --port 8108 --workers 1`，离线 LLM | health=`ok`、ready=`ready`、JSON HTTP 200、SSE HTTP 200，包含 token/done 与 X-Trace-ID |
+| Compose 静态校验 | 默认和 `--profile api` 的 `docker compose config --quiet` | 两种配置均通过；API 默认绑定本机且单 Worker |
+| Docker 镜像与健康 | `docker compose --profile api up -d --build api --wait`，宿主端口 8109 | 最终代码状态的 `personax:2.8.0` 构建成功；容器 healthy；JSON/SSE 均 200，配置 2 RPM 时第三次请求为 429、`Retry-After=60` |
+| 容器身份与加固 | `id` + `docker inspect personax-api-1` | UID 100 非 root；`Restart=no`、`ReadonlyRootfs=true`、PID=256、`CapDrop=[ALL]`、`no-new-privileges=true` |
+| 完整发布门禁 | `python scripts/release_check.py` | 七道门禁全部通过：156 单测、3/3 稿件合规、16/16 红队、16 条支持度、12/12 助手、120 条 RAG；46.52s；最终密钥复扫 324 文件无可提交危险项 |
+| 覆盖率门禁 | `pytest --cov=core --cov=publishers --cov=api --cov-fail-under=55` | 156 passed；总覆盖率 71.19%，`api.py` 84%，超过 55% 下限 |
+
+容器验证显式设置 `LLM_BACKEND=offline` 且清空云端 Key，没有调用云端模型、没有登录平台、没有真实发布。验证结束后已停止并删除 API 测试容器，Docker Desktop 已通过官方 CLI 停止；镜像和命名卷保留。FastAPI 目前是本机/受控局域网单 Worker 服务，不等同于公网生产部署或线上 SLA。
+
+## 阶段 16：PersonaX 2.8.1 双语 API 文档
+
+| 检查 | 命令或方式 | 结果 |
+|---|---|---|
+| API 文档专项 | `pytest tests/test_api.py -q` | 12 passed；覆盖根路径与 `/docs` 默认简中跳转、简中/英文页面、双语 OpenAPI、未知语言 404、favicon 与无发布路由 |
+| 技术契约 | 对比 `/openapi/zh-CN.json` 与 `/openapi/en.json` | 路径、字段名与 SSE 事件名保持英文；接口用途、参数说明和示例按语言切换 |
+| 完整单元测试 | `pytest -q` | 159 passed，0 failed |
+| 完整发布门禁 | `python scripts/release_check.py` | 七道门禁全部通过：159 单测、3/3 稿件合规、327 文件敏感信息扫描、16/16 红队、16 条支持度、12/12 助手、120 条 RAG；44.28s |
+| 安全边界 | OpenAPI 路径断言 + 代码审查 | 文档仍不暴露 publish 路径；未加入隐藏启动、自启动、注册表项或计划任务 |
+
+本阶段只修改 API 文档展示、OpenAPI 元数据与请求示例，没有调用模型、启动浏览器自动化、登录平台或真实发布。Docker 镜像没有在本阶段重新构建，2.8.0 的容器验收记录保持为历史证据。
+
 ## 剩余风险与不声称项
 
 - 静态扫描能降低误提交凭据的风险，不等于专业 SAST/DAST 或依赖供应链审计。
 - 本轮未用受限账号做平台端到端发布测试，这是刻意的安全边界，不代表发布流程已在当前平台状态下验收。
 - 本地 `.env`、登录态和发布日志存在但已被 `.gitignore` 忽略；它们不在本次提交范围。
 - RAG 120 条、助手 12 条仍是围绕当前知识库构建的工程回归集，不可对外宣称为真实用户质量基准或线上 SLA。
-- Reviewer 目前能校验引用编号并披露无证据回答，但不能自动证明每句话都被引用片段支持；仍需人工集或可靠 Judge 评测句子级事实一致性。
+- Reviewer 已能捕获引用编号错误、低词法重合与明显否定冲突，但不能证明复杂同义改写、数值推理或跨句蕴含正确；仍需真实问题人工集、NLI 或经校准的 Judge。
+- 用户反馈候选仍可能包含上下文敏感信息；自动掩码只是降低风险，进入正式评测集前仍必须人工复核与去重。

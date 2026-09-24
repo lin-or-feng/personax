@@ -1,7 +1,7 @@
 [project]
 name = "personax"
-version = "2.3.1"
-description = "具备滑动上下文、双重限流、质量基线与安全门禁的本地内容 Agent"
+version = "2.8.1"
+description = "具备安全 JSON/SSE 服务接口、持久化 HITL 与可信 RAG 的本地内容 Agent"
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.0.0",
@@ -10,14 +10,16 @@ dependencies = [
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=3.0,<4.0",
     "langchain-core>=0.3.0",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.30,<1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio"]
+dev = ["pytest>=8.0", "pytest-asyncio", "pytest-cov>=5.0", "httpx>=0.27,<1"]
 publish = ["playwright>=1.40"]
 web = ["streamlit>=1.62,<2"]
 rag = ["sentence-transformers>=3.0"]
-all = ["pytest>=8.0", "playwright>=1.40", "streamlit>=1.62,<2", "sentence-transformers>=3.0"]
+all = ["pytest>=8.0", "httpx>=0.27,<1", "playwright>=1.40", "streamlit>=1.62,<2", "sentence-transformers>=3.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

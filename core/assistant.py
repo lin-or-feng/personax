@@ -1,4 +1,4 @@
-"""PersonaX 2.3.1 对话 AI 助手编排。
+"""PersonaX 2.6 对话 AI 助手编排。
 
 实现一个受限的 Supervisor-Worker 流程：
 route -> (knowledge_search) -> answer -> review -> checkpoint。
@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 import time
 from collections.abc import MutableMapping
 from dataclasses import dataclass
@@ -19,6 +20,9 @@ import yaml
 
 from .assistant_tools import KnowledgeSearchTool
 from .context_window import ContextWindow, build_sliding_context_window
+from .agent_runtime import AgentRunBudget
+from .grounding import evaluate_answer_grounding
+from .memory import sanitize_memory_text
 from .harness import Harness, RuleConfig
 from .llm import complete, complete_stream
 from .rag import RAGPipeline, build_rag_from_dir, resolve_min_score
@@ -152,26 +156,62 @@ class AssistantMemoryStore:
             "CREATE TABLE IF NOT EXISTS assistant_memories ("
             "memory_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "user_id TEXT NOT NULL, content TEXT NOT NULL, "
+            "kind TEXT NOT NULL DEFAULT 'preference', "
+            "source_thread_id TEXT NOT NULL DEFAULT '', "
+            "expires_at REAL, redacted INTEGER NOT NULL DEFAULT 0, "
             "created_at REAL NOT NULL, updated_at REAL NOT NULL, "
             "UNIQUE(user_id, content))"
         )
+        columns = {row[1] for row in db.execute("PRAGMA table_info(assistant_memories)")}
+        migrations = {
+            "kind": "ALTER TABLE assistant_memories ADD COLUMN kind TEXT NOT NULL DEFAULT 'preference'",
+            "source_thread_id": "ALTER TABLE assistant_memories ADD COLUMN source_thread_id TEXT NOT NULL DEFAULT ''",
+            "expires_at": "ALTER TABLE assistant_memories ADD COLUMN expires_at REAL",
+            "redacted": "ALTER TABLE assistant_memories ADD COLUMN redacted INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                db.execute(statement)
+        db.commit()
         return db
 
-    def add(self, user_id: str, content: str) -> AssistantMemory:
+    def add(
+        self,
+        user_id: str,
+        content: str,
+        *,
+        kind: str = "preference",
+        source_thread_id: str = "",
+        ttl_days: int | None = None,
+    ) -> AssistantMemory:
         normalized_user = (user_id or "local_user").strip()[:120]
-        normalized_content = re.sub(r"\s+", " ", content).strip()[:500]
+        normalized_content, redacted = sanitize_memory_text(content)
         if not normalized_content:
             raise ValueError("长期记忆不能为空")
+        normalized_kind = kind if kind in {"preference", "summary"} else "preference"
+        source_thread_id = (source_thread_id or "").strip()[:200]
         now = time.time()
+        expires_at = (
+            now + max(1, min(int(ttl_days), 3650)) * 86400
+            if ttl_days is not None else None
+        )
         with self._connect() as db:
             db.execute(
                 "INSERT INTO assistant_memories "
-                "(user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(user_id, content) DO UPDATE SET updated_at = excluded.updated_at",
-                (normalized_user, normalized_content, now, now),
+                "(user_id, content, kind, source_thread_id, expires_at, redacted, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(user_id, content) DO UPDATE SET "
+                "kind = excluded.kind, source_thread_id = excluded.source_thread_id, "
+                "expires_at = excluded.expires_at, redacted = excluded.redacted, "
+                "updated_at = excluded.updated_at",
+                (
+                    normalized_user, normalized_content, normalized_kind,
+                    source_thread_id, expires_at, int(redacted), now, now,
+                ),
             )
             row = db.execute(
-                "SELECT memory_id, user_id, content, created_at, updated_at "
+                "SELECT memory_id, user_id, content, kind, source_thread_id, "
+                "expires_at, redacted, created_at, updated_at "
                 "FROM assistant_memories WHERE user_id = ? AND content = ?",
                 (normalized_user, normalized_content),
             ).fetchone()
@@ -179,8 +219,9 @@ class AssistantMemoryStore:
         if row is None:  # pragma: no cover - SQLite 写入后理论上不可达
             raise RuntimeError("长期记忆保存失败")
         return AssistantMemory(
-            memory_id=row[0], user_id=row[1], content=row[2],
-            created_at=row[3], updated_at=row[4],
+            memory_id=row[0], user_id=row[1], content=row[2], kind=row[3],
+            source_thread_id=row[4], expires_at=row[5], redacted=bool(row[6]),
+            created_at=row[7], updated_at=row[8],
         )
 
     def list(self, user_id: str, limit: int = 20) -> list[AssistantMemory]:
@@ -189,15 +230,18 @@ class AssistantMemoryStore:
         safe_limit = max(1, min(int(limit), 100))
         with self._connect() as db:
             rows = db.execute(
-                "SELECT memory_id, user_id, content, created_at, updated_at "
+                "SELECT memory_id, user_id, content, kind, source_thread_id, "
+                "expires_at, redacted, created_at, updated_at "
                 "FROM assistant_memories WHERE user_id = ? "
+                "AND (expires_at IS NULL OR expires_at > ?) "
                 "ORDER BY updated_at DESC LIMIT ?",
-                ((user_id or "local_user").strip()[:120], safe_limit),
+                ((user_id or "local_user").strip()[:120], time.time(), safe_limit),
             ).fetchall()
         return [
             AssistantMemory(
-                memory_id=row[0], user_id=row[1], content=row[2],
-                created_at=row[3], updated_at=row[4],
+                memory_id=row[0], user_id=row[1], content=row[2], kind=row[3],
+                source_thread_id=row[4], expires_at=row[5], redacted=bool(row[6]),
+                created_at=row[7], updated_at=row[8],
             )
             for row in rows
         ]
@@ -211,6 +255,20 @@ class AssistantMemoryStore:
                 ((user_id or "local_user").strip()[:120], int(memory_id)),
             )
             db.commit()
+
+    def delete_all(self, user_id: str) -> int:
+        if not self.path.exists():
+            return 0
+        with self._connect() as db:
+            cursor = db.execute(
+                "DELETE FROM assistant_memories WHERE user_id = ?",
+                ((user_id or "local_user").strip()[:120],),
+            )
+            db.commit()
+        return int(cursor.rowcount)
+
+    def export(self, user_id: str) -> list[dict[str, Any]]:
+        return [memory.model_dump(mode="json") for memory in self.list(user_id, limit=100)]
 
 
 def load_assistant_prompts(path: str | Path = "config/assistant_prompts.yaml") -> dict[str, str]:
@@ -268,6 +326,7 @@ class _AssistantTurnState:
     degraded: bool
     step: int
     route: str
+    budget: AgentRunBudget
     history_kept: int = 0
     history_dropped: int = 0
     history_tokens: int = 0
@@ -307,6 +366,7 @@ class AssistantOrchestrator:
         self.persona = persona or {}
         self.harness = harness or Harness(RuleConfig(**self.persona.get("harness", {})))
         self._rag_pipeline = rag_pipeline
+        self._rag_lock = threading.Lock()
         self.complete_fn = complete_fn
         self.stream_complete_fn = stream_complete_fn
         self.checkpoints = checkpoint_store
@@ -314,18 +374,20 @@ class AssistantOrchestrator:
 
     def _rag(self) -> RAGPipeline:
         if self._rag_pipeline is None:
-            cfg = self.persona.get("rag", {}) or {}
-            self._rag_pipeline = build_rag_from_dir(
-                cfg.get("knowledge_dir", "knowledge"),
-                chunk_size=int(cfg.get("chunk_size", 600)),
-                embedding_backend=cfg.get("embedding_backend"),
-                embedding_model=cfg.get("embedding_model"),
-                query_enhancer=cfg.get("query_enhancer"),
-                enable_hyde=bool(cfg.get("enable_hyde", False)),
-                reranker=cfg.get("reranker"),
-                reranker_model=cfg.get("reranker_model"),
-                retrieval_mode=cfg.get("retrieval_mode"),
-            )
+            with self._rag_lock:
+                if self._rag_pipeline is None:
+                    cfg = self.persona.get("rag", {}) or {}
+                    self._rag_pipeline = build_rag_from_dir(
+                        cfg.get("knowledge_dir", "knowledge"),
+                        chunk_size=int(cfg.get("chunk_size", 600)),
+                        embedding_backend=cfg.get("embedding_backend"),
+                        embedding_model=cfg.get("embedding_model"),
+                        query_enhancer=cfg.get("query_enhancer"),
+                        enable_hyde=bool(cfg.get("enable_hyde", False)),
+                        reranker=cfg.get("reranker"),
+                        reranker_model=cfg.get("reranker_model"),
+                        retrieval_mode=cfg.get("retrieval_mode"),
+                    )
         return self._rag_pipeline
 
     @staticmethod
@@ -368,6 +430,7 @@ class AssistantOrchestrator:
                 temperature=0.0,
                 max_tokens=100,
                 max_retries=1,
+                trace_id=request.trace_id,
             )
             return self._parse_route_decision(raw)
         except Exception as exc:  # noqa: BLE001 - 结构化路由失败时必须确定性回退
@@ -433,9 +496,18 @@ class AssistantOrchestrator:
         state = _AssistantTurnState(
             started=time.perf_counter(), trace=[], sources=[],
             degraded=False, step=1, route="direct",
+            budget=AgentRunBudget(
+                max_steps=request.max_steps,
+                max_estimated_tokens=request.max_estimated_tokens,
+                deadline_seconds=request.deadline_seconds,
+            ),
         )
         route_decision = self._route(request)
         state.route = route_decision.route
+        state.budget.consume_step(
+            "route",
+            {"route": state.route, "router": route_decision.router},
+        )
         route_reason = re.sub(r"\s+", " ", route_decision.reason).strip()[:160]
         state.trace.append(AgentTraceStep(
             step=state.step,
@@ -449,6 +521,10 @@ class AssistantOrchestrator:
 
         if state.route == "knowledge" and state.step < request.max_steps:
             state.step += 1
+            state.budget.consume_step(
+                "knowledge_search",
+                {"query": request.question, "step": state.step},
+            )
             tool_started = time.perf_counter()
             try:
                 cfg = self.persona.get("rag", {}) or {}
@@ -462,13 +538,16 @@ class AssistantOrchestrator:
                 assistant_cfg = self.persona.get("assistant", {}) or {}
                 tool_runtime = str(assistant_cfg.get("tool_runtime", "langchain")).lower()
                 if tool_runtime == "langchain":
-                    raw_result = gateway.as_langchain_tool(request.thread_id).invoke(tool_arguments)
+                    raw_result = gateway.as_langchain_tool(
+                        request.thread_id, request.trace_id,
+                    ).invoke(tool_arguments)
                     tool_result = ToolCallResult.model_validate(raw_result)
                 else:
                     tool_result = gateway.call(ToolCallRequest(
                         name="assistant_knowledge_search",
                         arguments=tool_arguments,
                         user_id=request.thread_id,
+                        trace_id=request.trace_id,
                     ))
                 if tool_result.status == "ok" and tool_result.output is not None:
                     result = tool_result.output
@@ -516,6 +595,7 @@ class AssistantOrchestrator:
         )
         if "{memory}" not in template and request.memories:
             prompt += f"\n\n用户显式保存的长期记忆：\n{self._memory_context(request.memories)}"
+        state.budget.reserve_text(prompt)
         return prompt
 
     def _append_answer_trace(
@@ -552,6 +632,10 @@ class AssistantOrchestrator:
     ) -> AssistantResponse:
         if state.step < request.max_steps:
             state.step += 1
+            state.budget.consume_step(
+                "grounding_check",
+                {"sources": len(state.sources), "step": state.step},
+            )
             review_started = time.perf_counter()
             citation_numbers = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
             invalid_citations = [
@@ -571,6 +655,29 @@ class AssistantOrchestrator:
                 review_detail = f"发现无效引用编号：{sorted(set(invalid_citations))}"
                 review_status = "degraded"
                 state.degraded = True
+            elif state.sources and citation_numbers:
+                grounding = evaluate_answer_grounding(answer, state.sources)
+                unsupported = [
+                    item for item in grounding.claims
+                    if item.citations and not item.supported
+                ]
+                if unsupported:
+                    answer += (
+                        "\n\n> 部分带引用结论未通过本地词法支持度检查，"
+                        "请展开来源核对原文。"
+                    )
+                    review_detail = (
+                        f"答案支持度降级：{len(unsupported)}/"
+                        f"{grounding.cited_claims} 条带引用结论未通过"
+                    )
+                    review_status = "degraded"
+                    state.degraded = True
+                else:
+                    review_detail = (
+                        f"引用有效；答案支持度通过="
+                        f"{grounding.supported_claims}/{grounding.cited_claims}"
+                    )
+                    review_status = "ok"
             elif state.route == "knowledge" and not state.sources:
                 disclosure = "本地知识库未检索到可核验资料"
                 if disclosure not in answer:
@@ -609,6 +716,7 @@ class AssistantOrchestrator:
         duration_ms = round((time.perf_counter() - state.started) * 1000, 1)
         self.harness.audit.write(
             event="assistant_reply",
+            trace_id=request.trace_id,
             thread_id=request.thread_id,
             route=state.route,
             sources=len(state.sources),
@@ -616,18 +724,21 @@ class AssistantOrchestrator:
             steps=len(state.trace),
             degraded=state.degraded,
             duration_ms=duration_ms,
+            estimated_tokens=state.budget.estimated_tokens,
         )
         try:
             from .usage import record
 
             record(
                 "assistant_reply",
+                trace_id=request.trace_id,
                 route=state.route,
                 sources=len(state.sources),
                 memories=len(request.memories),
                 steps=len(state.trace),
                 degraded=state.degraded,
                 wall_ms=duration_ms,
+                estimated_tokens=state.budget.estimated_tokens,
             )
         except Exception:  # noqa: BLE001
             pass
@@ -636,6 +747,7 @@ class AssistantOrchestrator:
             route=state.route,
             sources=state.sources,
             trace=state.trace,
+            trace_id=request.trace_id,
             checkpoint_id=checkpoint_id,
             degraded=state.degraded,
         )
@@ -649,6 +761,9 @@ class AssistantOrchestrator:
             state.degraded = True
         else:
             state.step += 1
+            state.budget.consume_step(
+                "generate_answer", {"route": state.route, "step": state.step},
+            )
             answer_started = time.perf_counter()
             try:
                 answer = self.complete_fn(
@@ -657,6 +772,7 @@ class AssistantOrchestrator:
                     temperature=0.3,
                     max_tokens=700,
                     max_retries=2,
+                    trace_id=request.trace_id,
                 ).strip()
                 if not answer:
                     raise ValueError("模型返回空文本")
@@ -689,6 +805,9 @@ class AssistantOrchestrator:
             yield answer
         else:
             state.step += 1
+            state.budget.consume_step(
+                "generate_answer", {"route": state.route, "step": state.step},
+            )
             answer_started = time.perf_counter()
             pieces: list[str] = []
             try:
@@ -698,6 +817,7 @@ class AssistantOrchestrator:
                     temperature=0.3,
                     max_tokens=700,
                     max_retries=2,
+                    trace_id=request.trace_id,
                 ):
                     text = str(chunk)
                     if text:

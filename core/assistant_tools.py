@@ -63,7 +63,7 @@ class KnowledgeSearchTool:
                 or hit.chunk.summary
                 or f"知识片段 {index}"
             )
-            excerpt = " ".join(hit.chunk.text.split())[:360]
+            excerpt = " ".join(hit.chunk.context_text.split())[:360]
             sources.append(AssistantSource(
                 ref_id=str(index),
                 title=sanitize_source_text(title, fallback=f"知识片段 {index}"),
