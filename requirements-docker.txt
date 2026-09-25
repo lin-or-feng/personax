@@ -1,7 +1,7 @@
 # PersonaX Docker runtime direct dependencies.
 # Pinning the direct runtime surface keeps different machines on the validated
 # framework versions while the Docker image fixes the OS and Python runtime.
-openai==3.5.0
+openai==3.16.2
 pydantic==2.13.4
 PyYAML==6.0.3
 langgraph==1.2.11
