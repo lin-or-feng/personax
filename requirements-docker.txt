@@ -10,3 +10,4 @@ langchain-core==1.6.0
 streamlit==1.62.0
 fastapi==0.141.1
 uvicorn==0.52.4
+pillow==12.0.0
