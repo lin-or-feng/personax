@@ -2,7 +2,7 @@
 from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Draft(BaseModel):
@@ -63,6 +63,150 @@ class AssistantSource(BaseModel):
     source_url: str = ""
     excerpt: str = ""
     score: float = 0.0
+    document_id: str = ""
+    document_version: str = ""
+    chunk_id: str = ""
+    page: int | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    section: str = ""
+
+
+class KnowledgeImportRequest(BaseModel):
+    """本地操作者导入契约；kb_id 是分区，不是身份认证。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kb_id: str = Field(default="ai-engineering", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+    source_path: str = Field(min_length=1, max_length=500)
+    title: str = Field(default="", max_length=300)
+    source_url: str = Field(default="", max_length=2_048)
+    license: str = Field(default="", max_length=300)
+
+
+class KnowledgeUnit(BaseModel):
+    """规范化正文段；位置指向原始页或源文本行。"""
+
+    text: str
+    section: str = ""
+    page: int | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+
+
+class KnowledgeChunk(KnowledgeUnit):
+    chunk_id: str
+    parent_id: str
+    parent_text: str
+
+
+class KnowledgeDocument(BaseModel):
+    kb_id: str
+    document_id: str
+    document_version: str
+    source_path: str
+    title: str
+    source_url: str = ""
+    license: str = ""
+    content_hash: str
+    parser_version: str
+    status: Literal["active", "deleted"] = "active"
+    chunks: list[KnowledgeChunk] = Field(default_factory=list)
+    updated_at: float = 0.0
+    revision: int = Field(default=0, ge=0)
+
+
+class KnowledgeImportResult(BaseModel):
+    job_id: str
+    document_id: str
+    status: Literal["created", "updated", "unchanged", "failed"]
+    document_version: str = ""
+    chunk_count: int = 0
+    reason: str = ""
+
+
+class KnowledgeJob(BaseModel):
+    job_id: str
+    kb_id: str
+    document_id: str
+    operation: Literal["ingest", "delete"]
+    status: Literal["running", "completed", "failed", "abandoned"]
+    reason: str = ""
+    created_at: float
+    updated_at: float
+
+
+class KnowledgeSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kb_id: str = Field(default="ai-engineering", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+    query: str = Field(min_length=1, max_length=2_000)
+    top_k: int = Field(default=3, ge=1, le=10)
+    min_score: float = Field(default=0.15, ge=0.0, le=1.0)
+
+
+class KnowledgeSearchResponse(BaseModel):
+    kb_id: str
+    answer: str
+    sources: list[AssistantSource] = Field(default_factory=list)
+    index_version: str
+    mode: Literal["extractive_baseline"] = "extractive_baseline"
+    document_count: int = 0
+    embedding_backend: str = "hashing"
+    retrieval_mode: str = "hybrid"
+
+
+class KnowledgeRelationInput(BaseModel):
+    """Evidence-backed association; co-occurrence never implies causation."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kb_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    subject: str = Field(min_length=2, max_length=100)
+    predicate: Literal["co_mentions"] = "co_mentions"
+    object: str = Field(min_length=2, max_length=100)
+    document_id: str = Field(min_length=1, max_length=100)
+    document_version: str = Field(min_length=1, max_length=100)
+    chunk_id: str = Field(min_length=1, max_length=100)
+    evidence: str = Field(min_length=5, max_length=600)
+
+
+class KnowledgeRelation(KnowledgeRelationInput):
+    relation_id: str
+
+
+class KnowledgeGraphQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    kb_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    entity: str = Field(min_length=2, max_length=100)
+    max_hops: int = Field(default=2, ge=1, le=2)
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class KnowledgeGraphPath(BaseModel):
+    entities: list[str]
+    relations: list[KnowledgeRelation]
+
+
+class KnowledgeGraphResult(BaseModel):
+    kb_id: str
+    paths: list[KnowledgeGraphPath] = Field(default_factory=list)
+    excluded_stale_relations: int = 0
+    mode: Literal["evidence_backed_cooccurrence_graph"] = "evidence_backed_cooccurrence_graph"
+
+
+class KnowledgeCatalogConfig(BaseModel):
+    """Operator-owned catalog settings; paths/providers are never client arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+    db_path: str = "logs/knowledge.sqlite3"
+    source_root: str = "examples/ai_engineering"
+    allowed_kb_ids: list[str] = Field(default_factory=lambda: ["ai-engineering", "python-official"], min_length=1, max_length=20)
+    embedding_backend: Literal["hashing", "ollama", "sentence-transformers"] = "hashing"
+    embedding_model: str = "bge-m3"
+    retrieval_mode: Literal["bm25", "dense", "hybrid"] = "hybrid"
+    min_score: float = Field(default=0.15, ge=0, le=1)
+    top_k: int = Field(default=4, ge=1, le=10)
+
+    vector_store: Literal["memory", "qdrant"] = "memory"
+    qdrant_path: str = ".rag_cache/qdrant_catalog"
 
 
 class AgentTraceStep(BaseModel):
@@ -84,6 +228,11 @@ class AssistantRequest(BaseModel):
     memories: list[str] = Field(default_factory=list, max_length=20)
     thread_id: str = Field(default="local")
     use_knowledge: bool = True
+    execution_mode: Literal["workflow", "agent"] = "workflow"
+    knowledge_source: Literal["legacy", "catalog"] = "legacy"
+    kb_id: str = Field(default="ai-engineering", pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    task: Literal["qa", "compare", "summary"] = "qa"
+    answer_mode: Literal["extractive", "llm"] = "extractive"
     max_steps: int = Field(default=4, ge=2, le=8)
     max_estimated_tokens: int = Field(default=6_000, ge=512, le=32_000)
     deadline_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
@@ -122,6 +271,11 @@ class AssistantAPIRequest(BaseModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
     use_knowledge: bool = True
+    execution_mode: Literal["workflow", "agent"] = "workflow"
+    knowledge_source: Literal["legacy", "catalog"] = "legacy"
+    kb_id: str = Field(default="ai-engineering", pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+    task: Literal["qa", "compare", "summary"] = "qa"
+    answer_mode: Literal["extractive", "llm"] = "extractive"
     max_steps: int = Field(default=4, ge=2, le=8)
     max_estimated_tokens: int = Field(default=6_000, ge=512, le=32_000)
     deadline_seconds: float = Field(default=60.0, ge=1.0, le=120.0)
@@ -135,6 +289,11 @@ class AssistantAPIRequest(BaseModel):
             memories=self.memories,
             thread_id=self.thread_id or f"api-{uuid.uuid4().hex[:16]}",
             use_knowledge=self.use_knowledge,
+            execution_mode=self.execution_mode,
+            knowledge_source=self.knowledge_source,
+            kb_id=self.kb_id,
+            task=self.task,
+            answer_mode=self.answer_mode,
             max_steps=self.max_steps,
             max_estimated_tokens=self.max_estimated_tokens,
             deadline_seconds=self.deadline_seconds,
@@ -151,6 +310,62 @@ class AssistantResponse(BaseModel):
     trace: list[AgentTraceStep] = Field(default_factory=list)
     trace_id: str = ""
     checkpoint_id: str = ""
+    degraded: bool = False
+    execution_mode: Literal["workflow", "agent"] = "workflow"
+    stop_reason: str = ""
+    budget_steps: int = Field(default=0, ge=0)
+    estimated_tokens: int = Field(default=0, ge=0)
+    knowledge_source: Literal["legacy", "catalog"] = "legacy"
+    kb_id: str = ""
+    index_version: str = ""
+    answer_mode: Literal["legacy", "extractive_baseline", "extractive_fallback", "llm_grounded", "refused"] = "legacy"
+
+
+class RetrievalAgentDecision(BaseModel):
+    """模型只能选择只读行动，不能覆盖服务端工具权限和检索参数。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    action: Literal["search", "finish", "clarify", "insufficient_evidence"]
+    query: str = Field(default="", max_length=2_000)
+    clarification: str = Field(default="", max_length=300)
+
+    @model_validator(mode="after")
+    def validate_action(self) -> "RetrievalAgentDecision":
+        if self.action == "search":
+            if not self.query or self.clarification:
+                raise ValueError("search 只接受非空 query")
+        elif self.action == "clarify":
+            if not self.clarification or self.query:
+                raise ValueError("clarify 只接受非空 clarification")
+        elif self.query or self.clarification:
+            raise ValueError("结束动作不接受工具参数或回答正文")
+        return self
+
+
+class RetrievalAgentConfig(BaseModel):
+    """仅运维配置可修改，不作为 HTTP 客户端参数暴露。"""
+
+    model_config = ConfigDict(extra="forbid")
+    max_searches: int = Field(default=3, ge=1, le=3)
+    decision_timeout_seconds: float = Field(default=20.0, gt=0, le=60)
+    decision_max_tokens: int = Field(default=240, ge=64, le=400)
+
+
+class RetrievalAgentObservation(BaseModel):
+    """本轮内存中的工具观察，不持久化检索词或来源正文。"""
+
+    query: str
+    status: str
+    error_kind: str = "none"
+    sources: list[AssistantSource] = Field(default_factory=list)
+
+
+class RetrievalAgentResult(BaseModel):
+    disposition: Literal["answer", "clarify", "refuse", "fallback"]
+    stop_reason: str
+    clarification: str = ""
+    sources: list[AssistantSource] = Field(default_factory=list)
+    trace: list[AgentTraceStep] = Field(default_factory=list)
     degraded: bool = False
 
 

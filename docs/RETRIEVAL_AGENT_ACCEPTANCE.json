@@ -1,0 +1,150 @@
+{
+  "scope": "synthetic_control_flow_acceptance_not_model_quality",
+  "baseline": "fixed_original_query_once_no_generation",
+  "limitations": [
+    "scripted model and synthetic retrieval",
+    "not a blind holdout",
+    "no real-model accuracy, latency, cost or ROI claim"
+  ],
+  "cases": 8,
+  "passed_cases": 8,
+  "passed": true,
+  "details": [
+    {
+      "id": "single_search",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 1,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 1,
+        "decision_model_calls": 2,
+        "sources": 1,
+        "budget_steps": 3,
+        "estimated_tokens": 801,
+        "stop_reason": "evidence_ready"
+      }
+    },
+    {
+      "id": "rewrite_after_empty",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 0,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 2,
+        "decision_model_calls": 3,
+        "sources": 1,
+        "budget_steps": 5,
+        "estimated_tokens": 1205,
+        "stop_reason": "evidence_ready"
+      }
+    },
+    {
+      "id": "two_source_comparison",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 1,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 2,
+        "decision_model_calls": 3,
+        "sources": 2,
+        "budget_steps": 5,
+        "estimated_tokens": 1313,
+        "stop_reason": "evidence_ready"
+      }
+    },
+    {
+      "id": "clarification",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 0,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 0,
+        "decision_model_calls": 1,
+        "sources": 0,
+        "budget_steps": 1,
+        "estimated_tokens": 386,
+        "stop_reason": "needs_clarification"
+      }
+    },
+    {
+      "id": "insufficient_evidence",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 0,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 1,
+        "decision_model_calls": 2,
+        "sources": 0,
+        "budget_steps": 3,
+        "estimated_tokens": 757,
+        "stop_reason": "insufficient_evidence"
+      }
+    },
+    {
+      "id": "repeated_query",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 1,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 1,
+        "decision_model_calls": 2,
+        "sources": 1,
+        "budget_steps": 3,
+        "estimated_tokens": 805,
+        "stop_reason": "repeated_query"
+      }
+    },
+    {
+      "id": "invalid_planner",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 1,
+        "sources": 1,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 1,
+        "decision_model_calls": 1,
+        "sources": 1,
+        "budget_steps": 2,
+        "estimated_tokens": 361,
+        "stop_reason": "planner_invalid_fallback"
+      }
+    },
+    {
+      "id": "retrieval_disabled",
+      "passed": true,
+      "fixed_query_baseline": {
+        "retrieval_calls": 0,
+        "sources": 0,
+        "decision_model_calls": 0
+      },
+      "agent": {
+        "retrieval_calls": 0,
+        "decision_model_calls": 1,
+        "sources": 0,
+        "budget_steps": 1,
+        "estimated_tokens": 369,
+        "stop_reason": "retrieval_disabled"
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+flowchart TB
+    DOC[当前有效文档与 Chunk] --> PAIRS[限定范围的实体词对]
+    PAIRS --> QUOTE[核对原文同时包含两个实体]
+    QUOTE --> EDGE[类型化共现关系 证据 文档版本 Chunk ID]
+    EDGE --> DB[(SQLite 实体关联表)]
+    QUERY[精确实体名查询] --> VALIDATE[重新校验 active 版本与原文证据]
+    DB --> VALIDATE
+    DOC --> VALIDATE
+    VALIDATE -->|过期或删除| EXCLUDE[排除旧关系]
+    VALIDATE -->|有效| BFS[最多两跳 避免环路 限制结果数]
+    BFS --> PATH[返回路径与每条边的原文证据]

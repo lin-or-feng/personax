@@ -10,6 +10,7 @@
   rag-eval  跑可复现的 RAG Recall/MRR 质量门禁
   telemetry 查看安全遥测聚合或指定 Trace
   feedback  查看反馈聚合并导出待人工标注候选
+  knowledge 本地领域文档入库、更新、检索、删除与任务核查
 
 示例：
   python main.py generate --topic "秋招穿搭"
@@ -394,6 +395,73 @@ def cmd_feedback(args):
         print(rendered)
 
 
+def cmd_knowledge(args):
+    """本机操作者入口；不增加 HTTP 上传或发布权限。"""
+    from core.knowledge import KnowledgeBaseService
+    from pathlib import Path
+    from core.types import KnowledgeImportRequest, KnowledgeSearchRequest
+
+    try:
+        service = KnowledgeBaseService(args.db, args.source_root, chunk_size=args.chunk_size)
+        if args.action == "ingest":
+            result = service.ingest(KnowledgeImportRequest(kb_id=args.kb_id,
+                source_path=args.file, title=args.title, source_url=args.source_url, license=args.license))
+            print(result.model_dump_json(indent=2))
+            if result.status == "failed":
+                raise SystemExit(1)
+        elif args.action == "search":
+            result = service.search(KnowledgeSearchRequest(kb_id=args.kb_id, query=args.query,
+                top_k=args.top_k, min_score=args.min_score), backend=args.backend,
+                model=args.model or None, retrieval_mode=args.mode,
+                vector_store=args.vector_store, qdrant_path=args.qdrant_path)
+            print(result.model_dump_json(indent=2))
+        elif args.action == "answer":
+            from core.assistant import AssistantOrchestrator
+            from core.types import AssistantRequest
+
+            assistant = AssistantOrchestrator({"knowledge_catalog": {
+                "db_path": str(Path(args.db).resolve()),
+                "source_root": str(Path(args.source_root).resolve()),
+                "allowed_kb_ids": [args.kb_id], "embedding_backend": args.backend,
+                "embedding_model": args.model or "bge-m3", "retrieval_mode": args.mode,
+                "min_score": args.min_score, "top_k": args.top_k,
+                "vector_store": args.vector_store, "qdrant_path": args.qdrant_path}})
+            result = assistant.reply(AssistantRequest(question=args.query,
+                knowledge_source="catalog", kb_id=args.kb_id, task=args.task,
+                answer_mode=args.answer_mode, thread_id="knowledge-cli"))
+            print(result.model_dump_json(indent=2))
+        elif args.action == "list":
+            rows = service.store.documents(args.kb_id, include_deleted=args.include_deleted)
+            # Listing is metadata-only: do not dump every source chunk to the console.
+            print(json.dumps([row.model_dump(exclude={"chunks"}) | {"chunk_count": len(row.chunks)}
+                for row in rows], ensure_ascii=False, indent=2))
+        elif args.action == "graph":
+            from core.knowledge_graph import KnowledgeGraphService
+            from core.types import KnowledgeGraphQuery
+            result = KnowledgeGraphService(args.db).query(KnowledgeGraphQuery(
+                kb_id=args.kb_id, entity=args.entity, max_hops=args.hops, limit=args.limit))
+            print(result.model_dump_json(indent=2))
+        elif args.action == "jobs":
+            print(json.dumps([row.model_dump() for row in service.store.jobs(args.kb_id)], ensure_ascii=False, indent=2))
+        elif args.action == "delete":
+            if not args.yes:
+                raise ValueError("delete_requires_yes")
+            print(json.dumps({"deleted": service.delete(args.kb_id, args.document_id),
+                "source_file_removed": False}, ensure_ascii=False))
+        elif args.action == "recover":
+            if not args.yes:
+                raise ValueError("recover_requires_no_running_import_and_yes")
+            print(json.dumps({"abandoned_jobs": service.store.recover(args.kb_id)}, ensure_ascii=False))
+    except SystemExit:
+        raise
+    except Exception as exc:
+        from core.document_parser import DocumentError
+        # No arbitrary exception/secret/path contents in public command errors.
+        reason = str(exc) if isinstance(exc, DocumentError) else type(exc).__name__
+        print(json.dumps({"error": reason}, ensure_ascii=False))
+        raise SystemExit(1) from None
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="personax",
@@ -544,6 +612,51 @@ def main():
     p_feedback.add_argument("--path", default="logs/assistant_feedback.sqlite3")
     p_feedback.add_argument("--output", default="", help="可选 JSON 输出路径")
     p_feedback.set_defaults(func=cmd_feedback)
+
+    p_knowledge = sub.add_parser("knowledge", help="本地领域知识库生命周期（默认离线）")
+    p_knowledge.add_argument("--db", default="logs/knowledge.sqlite3")
+    p_knowledge.add_argument("--source-root", default="examples/ai_engineering")
+    p_knowledge.add_argument("--kb-id", default="ai-engineering")
+    p_knowledge.add_argument("--chunk-size", type=int, default=600)
+    ksub = p_knowledge.add_subparsers(dest="action", required=True)
+    k_ingest = ksub.add_parser("ingest", help="根目录内的相对路径；不会联网抓取")
+    k_ingest.add_argument("--file", required=True)
+    k_ingest.add_argument("--title", default="")
+    k_ingest.add_argument("--source-url", default="")
+    k_ingest.add_argument("--license", default="")
+    k_search = ksub.add_parser("search", help="原文证据摘录，不自动调用生成模型")
+    k_search.add_argument("--query", required=True)
+    k_search.add_argument("--top-k", type=int, default=3)
+    k_search.add_argument("--min-score", type=float, default=0.15)
+    k_search.add_argument("--backend", choices=["hashing", "ollama", "sentence-transformers"], default="hashing")
+    k_search.add_argument("--model", default="")
+    k_search.add_argument("--mode", choices=["bm25", "hybrid", "dense"], default="hybrid")
+    k_search.add_argument("--vector-store", choices=["memory", "qdrant"], default="memory")
+    k_search.add_argument("--qdrant-path", default=".rag_cache/qdrant_catalog")
+    k_answer = ksub.add_parser("answer", help="目录库证据问答，默认不调用模型")
+    k_answer.add_argument("--query", required=True)
+    k_answer.add_argument("--top-k", type=int, default=4)
+    k_answer.add_argument("--min-score", type=float, default=0.15)
+    k_answer.add_argument("--backend", choices=["hashing", "ollama", "sentence-transformers"], default="hashing")
+    k_answer.add_argument("--model", default="")
+    k_answer.add_argument("--mode", choices=["bm25", "hybrid", "dense"], default="hybrid")
+    k_answer.add_argument("--task", choices=["qa", "compare", "summary"], default="qa")
+    k_answer.add_argument("--answer-mode", choices=["extractive", "llm"], default="extractive")
+    k_answer.add_argument("--vector-store", choices=["memory", "qdrant"], default="memory")
+    k_answer.add_argument("--qdrant-path", default=".rag_cache/qdrant_catalog")
+    k_list = ksub.add_parser("list")
+    k_graph = ksub.add_parser("graph", help="带来源的实体关联路径，不推断因果关系")
+    k_graph.add_argument("--entity", required=True)
+    k_graph.add_argument("--hops", type=int, choices=[1, 2], default=2)
+    k_graph.add_argument("--limit", type=int, default=10)
+    k_list.add_argument("--include-deleted", action="store_true")
+    ksub.add_parser("jobs")
+    k_delete = ksub.add_parser("delete", help="软删除目录记录，不删除原始文件")
+    k_delete.add_argument("--document-id", required=True)
+    k_delete.add_argument("--yes", action="store_true")
+    k_recover = ksub.add_parser("recover", help="确认无导入进程后，标记遗留任务 abandoned")
+    k_recover.add_argument("--yes", action="store_true")
+    p_knowledge.set_defaults(func=cmd_knowledge)
 
     argv = sys.argv[1:]
 

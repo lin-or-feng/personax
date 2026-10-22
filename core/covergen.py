@@ -8,7 +8,7 @@
 
 AI 背景增强（可选，配 Key 自动启用）：COVER_AI_ENABLED=1 + SILICONFLOW_API_KEY
   → 用文生图生成背景图 + PIL 叠加标题文字（文字清晰、背景精美）。
-  无 Key/失败自动回退本地海报，绝不影响发布。
+  无 Key 或远端失败时回退本地海报。
 
 运行时控制：covergen.configure(style=..., ai_enabled=...)（可视化界面调用）
 

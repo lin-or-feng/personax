@@ -1,0 +1,10 @@
+[
+  {"id":"single_search","question":"alpha","queries":["alpha"],"results":{"alpha":["A"]},"terminal":"finish","expected_stop":"evidence_ready","expected_calls":1,"expected_sources":1},
+  {"id":"rewrite_after_empty","question":"ambiguous","queries":["ambiguous","alpha"],"results":{"alpha":["A"]},"terminal":"finish","expected_stop":"evidence_ready","expected_calls":2,"expected_sources":1},
+  {"id":"two_source_comparison","question":"alpha","queries":["alpha","beta"],"results":{"alpha":["A"],"beta":["B"]},"terminal":"finish","expected_stop":"evidence_ready","expected_calls":2,"expected_sources":2},
+  {"id":"clarification","queries":[],"results":{},"terminal":"clarify","expected_stop":"needs_clarification","expected_calls":0,"expected_sources":0},
+  {"id":"insufficient_evidence","queries":["unknown"],"results":{},"terminal":"insufficient_evidence","expected_stop":"insufficient_evidence","expected_calls":1,"expected_sources":0},
+  {"id":"repeated_query","question":"alpha","queries":["alpha"," ALPHA "],"results":{"alpha":["A"]},"terminal":"finish","expected_stop":"repeated_query","expected_calls":1,"expected_sources":1},
+  {"id":"invalid_planner","queries":[],"results":{"invalid_planner":["A"]},"raw_decision":"not JSON","terminal":"finish","expected_stop":"planner_invalid_fallback","expected_calls":1,"expected_sources":1},
+  {"id":"retrieval_disabled","queries":["alpha"],"results":{"alpha":["A"]},"use_knowledge":false,"terminal":"finish","expected_stop":"retrieval_disabled","expected_calls":0,"expected_sources":0}
+]

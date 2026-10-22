@@ -6,8 +6,10 @@ $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $pythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $appPath = Join-Path $projectRoot "app.py"
-$ollamaPath = "C:\Users\Administrator\AppData\Local\Programs\Ollama\ollama.exe"
-$modelPath = "D:\OllamaModels"
+$ollamaCommand = Get-Command ollama.exe -ErrorAction SilentlyContinue
+$ollamaPath = if ($ollamaCommand) { $ollamaCommand.Source } else {
+    Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"
+}
 $url = "http://127.0.0.1:$Port"
 $tmpDir = Join-Path $projectRoot ".tmp"
 $streamlitStdout = Join-Path $tmpDir "streamlit-$Port.stdout.log"
@@ -25,7 +27,7 @@ if (-not (Test-Path -LiteralPath $streamlitRunner)) {
     throw "Streamlit background runner not found: $streamlitRunner"
 }
 New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-$env:OLLAMA_MODELS = $modelPath
+# Respect the user's Ollama model storage setting; do not replace it at startup.
 
 function Test-OllamaApi {
     try {

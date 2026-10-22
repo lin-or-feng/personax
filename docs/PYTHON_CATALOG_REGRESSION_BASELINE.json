@@ -1,0 +1,877 @@
+{
+  "scope": "real_official_documents_agent_authored_source_location_regression",
+  "independent_human_domain_evaluation": false,
+  "answer_factual_accuracy_measured": false,
+  "embedding_backend": "hashing_not_semantic_model",
+  "min_score": 0.15,
+  "timing_scope": "one_snapshot_build_per_mode_then_warm_queries_not_http_end_to_end",
+  "documents": 10,
+  "chunks": 531,
+  "cases": 18,
+  "corpus_version": "1f49de8155762cc2af0ce86b3951e9beb95b49be325fd79a519a00b44291de11",
+  "queryset_sha256": "6f3adc28d66faf2d43fa0c798009fea5c513a03cc0845146c534451bbb234ced",
+  "modes": [
+    {
+      "mode": "bm25",
+      "build_ms": 0.74,
+      "retrieval_ms_median": 130.61,
+      "slices": {
+        "development": {
+          "answerable_cases": 10,
+          "outside_cases": 0,
+          "gated_source_recall_at_3": 0.2,
+          "gated_source_mrr": 0.2,
+          "outside_rejection": null
+        },
+        "holdout": {
+          "answerable_cases": 5,
+          "outside_cases": 3,
+          "gated_source_recall_at_3": 0.2,
+          "gated_source_mrr": 0.2,
+          "outside_rejection": 1
+        }
+      },
+      "results": [
+        {
+          "id": "dev_tasks",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 141.42,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_semaphore",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-sync.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 146.81,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_executor",
+          "split": "development",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [
+            "concurrent.futures.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 133.99,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_transaction",
+          "split": "development",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 132.98,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_json",
+          "split": "development",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.8,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_path",
+          "split": "development",
+          "expected_sources": [
+            "pathlib.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.49,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_logging",
+          "split": "development",
+          "expected_sources": [
+            "logging.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.42,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_hash",
+          "split": "development",
+          "expected_sources": [
+            "hashlib.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 129.74,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_context",
+          "split": "development",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.47,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_mock",
+          "split": "development",
+          "expected_sources": [
+            "unittest.mock.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.49,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_cancel",
+          "split": "holdout",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 130.42,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_sql",
+          "split": "holdout",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 134.42,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_exception",
+          "split": "holdout",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 130.73,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_deadlock",
+          "split": "holdout",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 131.0,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_serialization",
+          "split": "holdout",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 131.31,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside1",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 42.62,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside2",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 45.93,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside3",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 42.85,
+          "provenance_complete": true
+        }
+      ]
+    },
+    {
+      "mode": "dense",
+      "build_ms": 161.49,
+      "retrieval_ms_median": 61.12,
+      "slices": {
+        "development": {
+          "answerable_cases": 10,
+          "outside_cases": 0,
+          "gated_source_recall_at_3": 1.0,
+          "gated_source_mrr": 1.0,
+          "outside_rejection": null
+        },
+        "holdout": {
+          "answerable_cases": 5,
+          "outside_cases": 3,
+          "gated_source_recall_at_3": 0.8,
+          "gated_source_mrr": 0.8,
+          "outside_rejection": 0.3333
+        }
+      },
+      "results": [
+        {
+          "id": "dev_tasks",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html",
+            "asyncio-sync.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 60.93,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_semaphore",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-sync.html"
+          ],
+          "actual_sources": [
+            "asyncio-sync.html",
+            "logging.html",
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 63.73,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_executor",
+          "split": "development",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [
+            "concurrent.futures.html",
+            "logging.html",
+            "asyncio-task.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.24,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_transaction",
+          "split": "development",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [
+            "sqlite3.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.1,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_json",
+          "split": "development",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [
+            "json.html",
+            "logging.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.28,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_path",
+          "split": "development",
+          "expected_sources": [
+            "pathlib.html"
+          ],
+          "actual_sources": [
+            "pathlib.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 62.72,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_logging",
+          "split": "development",
+          "expected_sources": [
+            "logging.html"
+          ],
+          "actual_sources": [
+            "logging.html",
+            "unittest.mock.html",
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 60.92,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_hash",
+          "split": "development",
+          "expected_sources": [
+            "hashlib.html"
+          ],
+          "actual_sources": [
+            "hashlib.html",
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.28,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_context",
+          "split": "development",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [
+            "contextlib.html",
+            "sqlite3.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 60.95,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_mock",
+          "split": "development",
+          "expected_sources": [
+            "unittest.mock.html"
+          ],
+          "actual_sources": [
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 60.04,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_cancel",
+          "split": "holdout",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html",
+            "asyncio-sync.html",
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.02,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_sql",
+          "split": "holdout",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [
+            "sqlite3.html",
+            "logging.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.44,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_exception",
+          "split": "holdout",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [
+            "contextlib.html",
+            "logging.html",
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.79,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_deadlock",
+          "split": "holdout",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [
+            "concurrent.futures.html",
+            "logging.html",
+            "asyncio-sync.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 61.13,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_serialization",
+          "split": "holdout",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 61.16,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside1",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 20.91,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside2",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [
+            "unittest.mock.html",
+            "pathlib.html",
+            "sqlite3.html"
+          ],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": false,
+          "latency_ms": 20.52,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside3",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [
+            "pathlib.html",
+            "contextlib.html"
+          ],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": false,
+          "latency_ms": 20.85,
+          "provenance_complete": true
+        }
+      ]
+    },
+    {
+      "mode": "hybrid",
+      "build_ms": 163.0,
+      "retrieval_ms_median": 194.25,
+      "slices": {
+        "development": {
+          "answerable_cases": 10,
+          "outside_cases": 0,
+          "gated_source_recall_at_3": 1.0,
+          "gated_source_mrr": 1.0,
+          "outside_rejection": null
+        },
+        "holdout": {
+          "answerable_cases": 5,
+          "outside_cases": 3,
+          "gated_source_recall_at_3": 0.8,
+          "gated_source_mrr": 0.8,
+          "outside_rejection": 0.3333
+        }
+      },
+      "results": [
+        {
+          "id": "dev_tasks",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html",
+            "asyncio-sync.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 190.93,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_semaphore",
+          "split": "development",
+          "expected_sources": [
+            "asyncio-sync.html"
+          ],
+          "actual_sources": [
+            "asyncio-sync.html",
+            "logging.html",
+            "contextlib.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 199.12,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_executor",
+          "split": "development",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [
+            "concurrent.futures.html",
+            "logging.html",
+            "asyncio-task.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 192.13,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_transaction",
+          "split": "development",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [
+            "sqlite3.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 197.18,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_json",
+          "split": "development",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [
+            "json.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 193.94,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_path",
+          "split": "development",
+          "expected_sources": [
+            "pathlib.html"
+          ],
+          "actual_sources": [
+            "pathlib.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 194.7,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_logging",
+          "split": "development",
+          "expected_sources": [
+            "logging.html"
+          ],
+          "actual_sources": [
+            "logging.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 193.36,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_hash",
+          "split": "development",
+          "expected_sources": [
+            "hashlib.html"
+          ],
+          "actual_sources": [
+            "hashlib.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 192.76,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_context",
+          "split": "development",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [
+            "contextlib.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 194.02,
+          "provenance_complete": true
+        },
+        {
+          "id": "dev_mock",
+          "split": "development",
+          "expected_sources": [
+            "unittest.mock.html"
+          ],
+          "actual_sources": [
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 194.53,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_cancel",
+          "split": "holdout",
+          "expected_sources": [
+            "asyncio-task.html"
+          ],
+          "actual_sources": [
+            "asyncio-task.html",
+            "asyncio-sync.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 194.6,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_sql",
+          "split": "holdout",
+          "expected_sources": [
+            "sqlite3.html"
+          ],
+          "actual_sources": [
+            "sqlite3.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 197.48,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_exception",
+          "split": "holdout",
+          "expected_sources": [
+            "contextlib.html"
+          ],
+          "actual_sources": [
+            "contextlib.html",
+            "sqlite3.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 197.06,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_deadlock",
+          "split": "holdout",
+          "expected_sources": [
+            "concurrent.futures.html"
+          ],
+          "actual_sources": [
+            "concurrent.futures.html",
+            "logging.html",
+            "asyncio-sync.html"
+          ],
+          "source_recall": 1.0,
+          "reciprocal_rank": 1.0,
+          "rejected": false,
+          "latency_ms": 197.96,
+          "provenance_complete": true
+        },
+        {
+          "id": "holdout_serialization",
+          "split": "holdout",
+          "expected_sources": [
+            "json.html"
+          ],
+          "actual_sources": [
+            "sqlite3.html",
+            "logging.html"
+          ],
+          "source_recall": 0.0,
+          "reciprocal_rank": 0,
+          "rejected": false,
+          "latency_ms": 194.47,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside1",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": true,
+          "latency_ms": 65.54,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside2",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [
+            "sqlite3.html",
+            "unittest.mock.html"
+          ],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": false,
+          "latency_ms": 67.05,
+          "provenance_complete": true
+        },
+        {
+          "id": "outside3",
+          "split": "holdout",
+          "expected_sources": [],
+          "actual_sources": [
+            "pathlib.html",
+            "contextlib.html"
+          ],
+          "source_recall": null,
+          "reciprocal_rank": 0,
+          "rejected": false,
+          "latency_ms": 64.19,
+          "provenance_complete": true
+        }
+      ]
+    }
+  ]
+}

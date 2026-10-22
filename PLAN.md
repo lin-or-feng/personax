@@ -1,60 +1,22 @@
-# PersonaX 项目搭建计划
+# 后续计划
 
-## 目标
-基于商用框架文档（LangGraph × Harness × Skill），搭建可运行的最小工程：
-- LangGraph 状态机编排（checkpoint + human-in-the-loop）
-- Skill 注册中心 + 多信号路由（对齐文档 Skill manifest 标准）
-- RAG：四索引 + 四查询 + RRF（可运行骨架）
-- Harness 规则引擎（allow/deny/quota/approval）
-- 评测体系（eval set + scorer）
-- 秋招讲述主线
+发布基线为 2.8.1；未发布改动包括目录库、实体关联、异步取消和受控检索 Agent。
 
-## 目录结构
-```
-personax/
-├── pyproject.toml
-├── README.md
-├── AGENTS.md              # 给 dsh/AI 的编码规范
-├── SPEC.md                # 架构硬约束
-├── config/
-│   └── persona.yaml
-├── core/
-│   ├── __init__.py
-│   ├── types.py           # Draft, SkillContext, ExecutionContext
-│   ├── llm.py             # DeepSeek (openai-compatible)
-│   ├── registry.py        # SkillRegistry + @register
-│   ├── style.py           # StyleEnforcer
-│   ├── graph.py           # LangGraph StateGraph
-│   ├── harness.py         # 规则引擎
-│   └── rag.py             # 四索引 + 四查询 + RRF
-├── skills/
-│   ├── __init__.py
-│   └── content.py         # Title/Tag/Body/Cover
-├── publishers/
-│   ├── base.py
-│   └── xhs.py             # Playwright (optional)
-├── eval/
-│   ├── eval_set.json
-│   └── scorer.py
-├── tests/
-│   └── test_pipeline.py
-└── main.py
-```
+## 发布前
 
-## 执行顺序
-1. 配置文件 + 依赖 (pyproject.toml)
-2. core/types.py - 数据契约
-3. core/llm.py - 真实 LLM 调用
-4. core/registry.py + skills/ - Skill 系统
-5. core/style.py - 风格约束
-6. core/rag.py - RAG 骨架
-7. core/harness.py - 规则引擎
-8. core/graph.py - LangGraph 编排
-9. orchestrator + main.py - 串起来
-10. eval + tests
-11. README + 验证
+1. 用独立标注题集对照 Workflow 与 Agent，分别测任务完成、引用支持、拒答、延迟和模型用量。
+2. 分析综合生成的支持度回退，区分确实缺证与词法检查误拒；不以降低校验标准代替评测。
+3. 对当前代码重新构建 Docker，并验证目录库可选依赖、命名卷、鉴权和取消行为。
+4. 完成公开文件、凭据、文档链接和许可证核查，再决定是否创建版本。
 
-## 验证
-- `pytest tests/` 全绿
-- `python main.py --topic "秋招穿搭"` 跑通完整链路
-- `python eval/scorer.py` 输出 CSV
+## 按需求扩展
+
+- 证据 ID 限定的上下文读取工具：先定义来源权限和失效规则。
+- 来源失效、备份恢复和运维告警：以实际使用中暴露的问题确定范围。
+- 仅在性能测量确认必要时引入 ANN、共享配额或外部会话存储。
+
+## 暂不包含
+
+多 Agent、任意网络/文件工具、模型自主发布、多 Worker 共享状态、完整 GraphRAG 与生产 SLA。
+
+验收以可运行行为和测试证据为准，不以增加版本号或组件数量代替交付。

@@ -572,6 +572,44 @@ class RAGPipeline:
         return kept[:top_k]
 
 
+def build_rag_from_documents(documents, *, embedder: Embedder | None = None,
+                             retrieval_mode: str = "hybrid", vector_store: VectorStore | None = None) -> RAGPipeline:
+    """Build a single-KB snapshot; preserve the original VectorStore API and Markdown path."""
+    from .types import KnowledgeDocument
+
+    rows: list[KnowledgeDocument] = list(documents)
+    if len({row.kb_id for row in rows}) > 1:
+        raise ValueError("catalog snapshot must contain only one knowledge base")
+    store = vector_store if vector_store is not None else VectorStore(embedder=embedder)
+    pipe = RAGPipeline(store=store, retrieval_mode=retrieval_mode)
+    chunks = []
+    active = sorted((row for row in rows if row.status == "active"), key=lambda row: row.document_id)
+    for document in active:
+        for chunk in document.chunks:
+            chunks.append(Chunk(id=chunk.chunk_id, text=chunk.text, summary=chunk.section or document.title,
+                metadata={"source": document.source_path, "topic": document.title,
+                    "source_url": document.source_url, "license": document.license,
+                    "kb_id": document.kb_id, "document_id": document.document_id,
+                    "document_version": document.document_version, "parent_id": chunk.parent_id,
+                    "parent_heading": chunk.section, "parent_text": chunk.parent_text,
+                    "page": chunk.page, "line_start": chunk.line_start, "line_end": chunk.line_end}))
+    if pipe.retrieval_mode == "lexical":
+        store.chunks.update({chunk.id: chunk for chunk in chunks})
+    else:
+        try:
+            store.add_many(chunks)
+        except Exception:
+            close = getattr(store, "close", None)
+            if close:
+                close()
+            raise
+    pipe.index_version = hashlib.sha256(json.dumps(
+        [(row.document_id, row.document_version) for row in active], ensure_ascii=False
+    ).encode("utf-8")).hexdigest()[:16]
+    pipe.chunk_strategy = "catalog_source_units"
+    return pipe
+
+
 def resolve_min_score(config: dict[str, Any], pipeline: RAGPipeline) -> float:
     """按 embedding 后端选择经过评测校准的相关性门槛。
 

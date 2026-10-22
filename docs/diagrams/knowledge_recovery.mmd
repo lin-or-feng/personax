@@ -1,0 +1,7 @@
+flowchart TB
+    DELETE[delete 与显式 yes] --> SOFT[事务内标记 deleted 并写任务事件]
+    SOFT --> NEWQUERY[后续新查询排除该文档]
+    INTERRUPT[提交前进程退出] --> OLD[旧快照不变 任务可能遗留 running]
+    OLD --> CONFIRM[操作者确认没有导入进程仍在运行]
+    CONFIRM --> RECOVER[recover --yes 标为 abandoned]
+    RECOVER --> RETRY[重新 ingest]

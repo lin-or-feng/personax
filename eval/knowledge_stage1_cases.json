@@ -1,0 +1,8 @@
+[
+  {"id": "hybrid", "query": "BM25 RRF", "expected_sources": ["rag.md"]},
+  {"id": "context", "query": "滑动窗口 近期消息", "expected_sources": ["context.html"]},
+  {"id": "recovery", "query": "检查点 外部动作 恢复", "expected_sources": ["context.html"]},
+  {"id": "updates", "query": "内容哈希 重复导入 文档版本", "expected_sources": ["operations.txt"]},
+  {"id": "unrelated-a", "query": "UnobtainiumHyperdrive", "expected_sources": []},
+  {"id": "unrelated-b", "query": "MozzarellaPizzaToppings", "expected_sources": []}
+]

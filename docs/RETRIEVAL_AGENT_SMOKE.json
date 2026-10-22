@@ -1,0 +1,361 @@
+{
+  "scope": "local_model_diagnostic_runs_not_independent_quality_evaluation",
+  "runs": [
+    {
+      "measured_at": "2026-10-22T12:51:27.490699+08:00",
+      "scope": "local_real_model_smoke_with_temporary_teaching_notes_not_quality_benchmark",
+      "generation_model": "qwen2.5:3b",
+      "embedding_backend": "hashing",
+      "cloud_called": false,
+      "models_downloaded": false,
+      "publishing_performed": false,
+      "user_catalog_read": false,
+      "calls": [
+        {
+          "action": "clarify",
+          "duration_ms": 27042.9
+        }
+      ],
+      "results": [
+        {
+          "case": "compare",
+          "stop_reason": "decision_timeout",
+          "answer_mode": "refused",
+          "degraded": true,
+          "sources": 0,
+          "model_calls": 0,
+          "budget_steps": 1,
+          "estimated_tokens": 337,
+          "duration_ms": 30026.5,
+          "actions": [
+            "agent_decide",
+            "grounding_check"
+          ]
+        },
+        {
+          "case": "clarify",
+          "stop_reason": "needs_clarification",
+          "answer_mode": "refused",
+          "degraded": false,
+          "sources": 0,
+          "model_calls": 1,
+          "budget_steps": 1,
+          "estimated_tokens": 339,
+          "duration_ms": 27045.4,
+          "actions": [
+            "agent_decide",
+            "grounding_check"
+          ]
+        }
+      ],
+      "checks": {
+        "comparison_two_sources": false,
+        "comparison_completed": false,
+        "ambiguity_clarified_without_search": true,
+        "real_model_called": false
+      },
+      "passed": false
+    },
+    {
+      "measured_at": "2026-10-22T12:55:47.789208+08:00",
+      "scope": "local_real_model_smoke_with_temporary_teaching_notes_not_quality_benchmark",
+      "generation_model": "qwen2.5:3b",
+      "embedding_backend": "hashing",
+      "cloud_called": false,
+      "models_downloaded": false,
+      "publishing_performed": false,
+      "user_catalog_read": false,
+      "calls": [
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 1688
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 363
+        },
+        {
+          "action": "clarify",
+          "status": "completed",
+          "duration_ms": 281.9
+        }
+      ],
+      "results": [
+        {
+          "case": "compare",
+          "stop_reason": "no_new_evidence",
+          "answer_mode": "extractive_fallback",
+          "degraded": true,
+          "sources": 2,
+          "model_calls": 2,
+          "budget_steps": 4,
+          "estimated_tokens": 1033,
+          "duration_ms": 2874.6,
+          "actions": [
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "knowledge_search",
+            "grounding_check"
+          ]
+        },
+        {
+          "case": "clarify",
+          "stop_reason": "needs_clarification",
+          "answer_mode": "refused",
+          "degraded": false,
+          "sources": 0,
+          "model_calls": 1,
+          "budget_steps": 1,
+          "estimated_tokens": 339,
+          "duration_ms": 284.2,
+          "actions": [
+            "agent_decide",
+            "grounding_check"
+          ]
+        }
+      ],
+      "checks": {
+        "comparison_two_sources": true,
+        "comparison_completed": false,
+        "ambiguity_clarified_without_search": true,
+        "real_model_called": true
+      },
+      "passed": false
+    },
+    {
+      "measured_at": "2026-10-22T12:57:05.98355+08:00",
+      "scope": "local_real_model_smoke_with_temporary_teaching_notes_not_quality_benchmark",
+      "generation_model": "qwen2.5:3b",
+      "embedding_backend": "hashing",
+      "cloud_called": false,
+      "models_downloaded": false,
+      "publishing_performed": false,
+      "user_catalog_read": false,
+      "calls": [
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 1727.8
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 437.6
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 463.3
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 180.2
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 161.1
+        }
+      ],
+      "results": [
+        {
+          "case": "compare",
+          "stop_reason": "no_new_evidence",
+          "answer_mode": "extractive_fallback",
+          "degraded": true,
+          "sources": 2,
+          "model_calls": 3,
+          "budget_steps": 5,
+          "estimated_tokens": 1887,
+          "duration_ms": 3291.1,
+          "actions": [
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "grounding_check"
+          ]
+        },
+        {
+          "case": "clarify",
+          "stop_reason": "repeated_query",
+          "answer_mode": "refused",
+          "degraded": true,
+          "sources": 0,
+          "model_calls": 2,
+          "budget_steps": 3,
+          "estimated_tokens": 765,
+          "duration_ms": 350.4,
+          "actions": [
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "grounding_check"
+          ]
+        }
+      ],
+      "checks": {
+        "comparison_two_sources": true,
+        "comparison_completed": false,
+        "ambiguity_clarified_without_search": false,
+        "real_model_called": true
+      },
+      "passed": false
+    },
+    {
+      "measured_at": "2026-10-22T12:57:47.351933+08:00",
+      "scope": "local_real_model_smoke_with_temporary_teaching_notes_not_quality_benchmark",
+      "generation_model": "qwen2.5:7b",
+      "embedding_backend": "hashing",
+      "cloud_called": false,
+      "models_downloaded": false,
+      "publishing_performed": false,
+      "user_catalog_read": false,
+      "calls": [
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 11040.4
+        },
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 751.2
+        },
+        {
+          "action": "finish",
+          "status": "completed",
+          "duration_ms": 368.6
+        },
+        {
+          "action": "clarify",
+          "status": "completed",
+          "duration_ms": 495.7
+        }
+      ],
+      "results": [
+        {
+          "case": "compare",
+          "stop_reason": "evidence_ready",
+          "answer_mode": "extractive_baseline",
+          "degraded": false,
+          "sources": 2,
+          "model_calls": 3,
+          "budget_steps": 5,
+          "estimated_tokens": 1873,
+          "duration_ms": 12995.8,
+          "actions": [
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "grounding_check"
+          ]
+        },
+        {
+          "case": "clarify",
+          "stop_reason": "needs_clarification",
+          "answer_mode": "refused",
+          "degraded": false,
+          "sources": 0,
+          "model_calls": 1,
+          "budget_steps": 1,
+          "estimated_tokens": 382,
+          "duration_ms": 498.5,
+          "actions": [
+            "agent_decide",
+            "grounding_check"
+          ]
+        }
+      ],
+      "checks": {
+        "comparison_two_sources": true,
+        "comparison_completed": true,
+        "ambiguity_clarified_without_search": true,
+        "real_model_called": true
+      },
+      "passed": true
+    },
+    {
+      "measured_at": "2026-10-22T12:59:26.389389+08:00",
+      "scope": "local_real_model_smoke_with_temporary_teaching_notes_not_quality_benchmark",
+      "generation_model": "qwen2.5:7b",
+      "embedding_backend": "hashing",
+      "requested_answer_mode": "llm",
+      "cloud_called": false,
+      "models_downloaded": false,
+      "publishing_performed": false,
+      "user_catalog_read": false,
+      "calls": [
+        {
+          "action": "search",
+          "status": "completed",
+          "duration_ms": 1961.6
+        },
+        {
+          "action": "finish",
+          "status": "completed",
+          "duration_ms": 338.2
+        },
+        {
+          "action": "answer_generation",
+          "status": "completed",
+          "duration_ms": 5865.9
+        },
+        {
+          "action": "clarify",
+          "status": "completed",
+          "duration_ms": 482.9
+        }
+      ],
+      "results": [
+        {
+          "case": "compare",
+          "stop_reason": "grounding_fallback",
+          "answer_mode": "extractive_fallback",
+          "degraded": true,
+          "sources": 2,
+          "model_calls": 3,
+          "budget_steps": 4,
+          "estimated_tokens": 1910,
+          "duration_ms": 8827.5,
+          "actions": [
+            "agent_decide",
+            "knowledge_search",
+            "agent_decide",
+            "generate_answer",
+            "grounding_check"
+          ]
+        },
+        {
+          "case": "clarify",
+          "stop_reason": "needs_clarification",
+          "answer_mode": "refused",
+          "degraded": false,
+          "sources": 0,
+          "model_calls": 1,
+          "budget_steps": 1,
+          "estimated_tokens": 382,
+          "duration_ms": 485,
+          "actions": [
+            "agent_decide",
+            "grounding_check"
+          ]
+        }
+      ],
+      "checks": {
+        "comparison_two_sources": true,
+        "comparison_completed": false,
+        "ambiguity_clarified_without_search": true,
+        "real_model_called": true
+      },
+      "passed": false
+    }
+  ]
+}

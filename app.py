@@ -163,6 +163,14 @@ def _diff_highlight(before: str, after: str) -> str:
 def _render_assistant_meta(message: dict) -> None:
     """渲染助手消息的来源与执行轨迹。"""
     sources = message.get("sources") or []
+    if message.get("execution_mode") == "agent":
+        st.caption(
+            f"受控检索 Agent · 停止原因 {message.get('stop_reason', '')} · "
+            f"模型/工具动作 {message.get('budget_steps', 0)} · "
+            f"估算 Token {message.get('estimated_tokens', 0)} · 回答检查后分块展示"
+        )
+    if message.get("knowledge_source") == "catalog":
+        st.caption(f"目录库 {message.get('kb_id', '')} · 模式 {message.get('answer_mode', '')} · 索引 {message.get('index_version', '')}")
     if sources:
         with st.expander(f"📚 引用来源（{len(sources)}）"):
             for source in sources:
@@ -180,6 +188,9 @@ def _render_assistant_meta(message: dict) -> None:
                 else:
                     st.text(f"[{ref}] {title} · {origin} · 相关度 {score:.3f}")
                 st.text(source.get("excerpt") or "")
+                if source.get("document_id"):
+                    location = f"第 {source['page']} 页" if source.get("page") else f"行 {source.get('line_start')}–{source.get('line_end')}"
+                    st.caption(f"{location} · 文档 {source['document_id']} · 版本 {source.get('document_version', '')[:16]} · {source.get('chunk_id', '')}")
     trace = message.get("trace") or []
     if trace:
         with st.expander(f"🔎 Agent Trace（{len(trace)} 步）"):
@@ -873,6 +884,40 @@ elif page == "assistant":
 
     assistant_config = st.container(border=True)
     assistant_config.subheader(":material/tune: 对话设置", anchor=False)
+    from core.catalog_runtime import catalog_config
+
+    catalog_settings = catalog_config(load_persona())
+    def reset_knowledge_session():
+        st.session_state.assistant_messages = []
+        st.session_state.assistant_thread_id = f"ui-{uuid.uuid4().hex[:12]}"
+        st.session_state.assistant_memory_bootstrapped = True
+
+    assistant_execution_mode = assistant_config.segmented_control(
+        "执行模式", ["workflow", "agent"], default="workflow", required=True,
+        format_func=lambda x: "固定 Workflow（对照基线）" if x == "workflow" else "受控检索 Agent（动态补查）",
+        key="assistant_execution_mode", on_change=reset_knowledge_session,
+    )
+    if assistant_execution_mode == "agent":
+        assistant_config.caption(
+            "模型动态选择检索、补查、澄清或结束；最多 3 次只读检索，不具有发布权限。"
+            "行动决策需要模型，即使回答选择原文证据也会调用模型；离线模板将触发确定性降级。"
+            "当前默认使用 qwen2.5:7b，先用原文证据检验行动；综合生成仍需进一步质量评测。"
+        )
+
+    k1, k2, k3, k4 = assistant_config.columns([2, 2, 1, 2])
+    knowledge_source = k1.selectbox("知识来源", ["catalog", "legacy"],
+        format_func=lambda x: "文档目录库（版本与位置证据）" if x == "catalog" else "原 Markdown 知识目录",
+        key="assistant_knowledge_source", on_change=reset_knowledge_session)
+    selected_kb = k2.selectbox("目录库", catalog_settings.allowed_kb_ids,
+        key="assistant_catalog_kb", disabled=knowledge_source != "catalog", on_change=reset_knowledge_session)
+    catalog_task = k3.selectbox("任务", ["qa", "compare", "summary"],
+        format_func=lambda x: {"qa": "问答", "compare": "来源对比", "summary": "片段摘要"}[x],
+        key="assistant_catalog_task", disabled=knowledge_source != "catalog")
+    catalog_answer_mode = k4.selectbox("回答模式", ["extractive", "llm"],
+        format_func=lambda x: ("原文证据（仅决策用模型）" if assistant_execution_mode == "agent" else "原文证据（无需模型）") if x == "extractive" else "基于证据生成（需模型）",
+        key="assistant_catalog_answer_mode", disabled=knowledge_source != "catalog")
+    if knowledge_source == "catalog":
+        assistant_config.caption("与 knowledge CLI 使用同一目录库。生成内容先检查再分块输出；无证据则拒答。切换来源或库会新建会话，旧记录仍保留。")
     a1, a2, a3, a4 = assistant_config.columns([2, 2, 1, 1])
     backend_labels = ["ollama（本地）", "deepseek（云端）", "offline（离线模板）"]
     current_backend = _backend()
@@ -881,7 +926,9 @@ elif page == "assistant":
         "对话后端", backend_labels, index=backend_index, key="assistant_backend")
     assistant_backend = assistant_backend_label.split("（", 1)[0]
     if assistant_backend == "ollama":
-        assistant_models = ["qwen2.5:3b", "qwen2.5:7b", "qwen2.5:14b", "deepseek-r1:7b"]
+        assistant_models = ["qwen2.5:7b", "qwen2.5:14b", "deepseek-r1:7b"]
+        if st.session_state.get("assistant_model") == "qwen2.5:3b":
+            st.session_state.assistant_model = "qwen2.5:7b"
     elif assistant_backend == "deepseek":
         assistant_models = ["deepseek-chat", "deepseek-reasoner"]
     else:
@@ -916,7 +963,7 @@ elif page == "assistant":
     memory_store = AssistantMemoryStore(ASSISTANT_CHECKPOINT_PATH)
     memory_user_id = "local_user"
 
-    if use_memory and not st.session_state.assistant_memory_bootstrapped:
+    if use_memory and knowledge_source == "legacy" and not st.session_state.assistant_memory_bootstrapped:
         latest_threads = checkpoint_store.list_threads(limit=1)
         if latest_threads:
             restored_thread = latest_threads[0].thread_id
@@ -1127,7 +1174,8 @@ elif page == "assistant":
         )
         with st.chat_message("assistant", avatar=":material/smart_toy:"):
             status = st.status(
-                "Agent 正在检索、规划并流式回答…", expanded=False, type="compact"
+                "Agent 正在决策、检索并检查回答…" if assistant_execution_mode == "agent" else "Workflow 正在检索并准备回答…",
+                expanded=False, type="compact"
             )
             response_stream = service.reply_stream(AssistantRequest(
                 question=prompt,
@@ -1135,7 +1183,13 @@ elif page == "assistant":
                 memories=[memory.content for memory in saved_memories],
                 thread_id=st.session_state.assistant_thread_id,
                 use_knowledge=use_knowledge,
-                max_steps=4,
+                execution_mode=assistant_execution_mode,
+                knowledge_source=knowledge_source,
+                kb_id=selected_kb,
+                task=catalog_task,
+                answer_mode=catalog_answer_mode,
+                max_steps=8 if assistant_execution_mode == "agent" else 4,
+                max_estimated_tokens=12_000 if assistant_execution_mode == "agent" else 6_000,
             ))
             st.write_stream(response_stream)
             response = response_stream.response
@@ -1156,6 +1210,14 @@ elif page == "assistant":
                 "trace_id": response.trace_id,
                 "thread_id": st.session_state.assistant_thread_id,
                 "degraded": response.degraded,
+                "knowledge_source": response.knowledge_source,
+                "kb_id": response.kb_id,
+                "index_version": response.index_version,
+                "answer_mode": response.answer_mode,
+                "execution_mode": response.execution_mode,
+                "stop_reason": response.stop_reason,
+                "budget_steps": response.budget_steps,
+                "estimated_tokens": response.estimated_tokens,
             }
             _render_assistant_meta(assistant_message)
         st.session_state.assistant_messages.append(assistant_message)
@@ -1280,6 +1342,45 @@ elif page == "knowledge":
         eyebrow="Retrieval knowledge",
     )
 
+    from core.catalog_runtime import catalog_config
+    from core.knowledge_store import KnowledgeStore
+
+    settings = catalog_config(load_persona())
+    st.subheader("文档目录库", anchor=False)
+    selected_catalog = st.selectbox("查看目录库", settings.allowed_kb_ids, key="knowledge_catalog_browser")
+    if selected_catalog not in settings.allowed_kb_ids:
+        st.error("目录库不在服务端允许清单内")
+        st.stop()
+    catalog_rows = KnowledgeStore(settings.db_path).documents(selected_catalog)
+    st.caption("只读查看。导入和删除仍通过 CLI 明确执行；AI 助手选择同名目录库即可检索这些当前有效版本。")
+    if catalog_rows:
+        st.dataframe([{"标题": row.title, "文档 ID": row.document_id,
+            "版本": row.document_version[:16], "分块数": len(row.chunks),
+            "来源": row.source_path, "许可": row.license} for row in catalog_rows], hide_index=True)
+    else:
+        st.info("当前目录库为空。先按 README 导入教学资料或官方文档包，再到 AI 助手提问。")
+    with st.form("catalog_graph_query"):
+        graph_entity = st.text_input("实体关联查询", value="Task", max_chars=100,
+            help="精确实体名，可查询一跳和两跳关联；关系仅代表原文共现，不代表因果。")
+        query_graph = st.form_submit_button("查询证据路径", icon=":material/hub:")
+    if query_graph:
+        from core.assistant import get_session_harness
+        from core.knowledge_graph import KnowledgeGraphService
+        from core.types import KnowledgeGraphQuery
+        try:
+            graph = KnowledgeGraphService(settings.db_path,
+                harness=get_session_harness(st.session_state, load_persona()))
+            graph_result = graph.query(KnowledgeGraphQuery(kb_id=selected_catalog, entity=graph_entity))
+            if not graph_result.paths:
+                st.info("没有当前有效版本支持的关联路径。")
+            for path in graph_result.paths:
+                st.text(" —关联→ ".join(path.entities))
+                for relation in path.relations:
+                    st.caption(f"{relation.document_id} · 版本 {relation.document_version[:16]} · {relation.chunk_id}")
+                    st.text(relation.evidence)
+        except Exception as exc:
+            st.warning(f"关联查询未完成：{type(exc).__name__}")
+    st.subheader("原 Markdown 目录", anchor=False)
     KNOWLEDGE_DIR = BASE / "knowledge"
     KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
 

@@ -1,0 +1,14 @@
+flowchart TB
+    TOPIC[主题与人格] --> ORCH[Python 或 LangGraph 编排]
+    ORCH --> CTX[原知识目录 RAG 与可选联网资料]
+    CTX --> SKILLS[标题 正文 标签 封面 Skill]
+    SKILLS --> CHECK[风格与合规检查]
+    CHECK -->|通过| PREVIEW[预览与 DryRun]
+    CHECK -->|失败| REVISE[有界重写或返回原因]
+    PREVIEW --> GATES[真实发布安全锁 人工确认或持久审批 配额 登录态]
+    GATES -->|满足当前入口要求| XHS[Playwright 填写与上传]
+    XHS --> DECLARE[AI 声明回读确认]
+    DECLARE -->|确认| CLICK[点击发布并核验成功证据]
+    DECLARE -->|失败| STOP[停止并保留排障证据]
+    CLICK -->|确认成功| LOG[发布结果与幂等留痕]
+    CLICK -->|未确认| STOP

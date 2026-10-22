@@ -46,7 +46,7 @@ rag:
   reranker: none                   # none / cross-encoder
   reranker_model: BAAI/bge-reranker-base
 
-# 对话 Agent 路由：rule 默认仅 1 次回答模型调用；llm 额外做 1 次结构化路由
+# Workflow 路由配置；execution_mode=agent 时使用下面的有界决策循环
 assistant:
   router: rule                 # rule / llm（无效 JSON 自动回退 rule）
   tool_runtime: langchain      # langchain(StructuredTool) / native；两者都必须经过 Harness
@@ -54,8 +54,23 @@ assistant:
   context_window_tokens: 3000  # 对话历史估算 token 上限（问题/RAG/记忆另算）
   context_message_tokens: 750  # 单条历史消息上限，防止一条超长文本占满窗口
   checkpoint_messages: 20     # 本地恢复记录可多于实际注入模型的上下文
+  agent:                      # 请求显式选择 agent 才启用；默认仍是 workflow
+    max_searches: 3            # 模型不能增加额度、修改阈值或指定发布工具
+    decision_timeout_seconds: 20
+    decision_max_tokens: 240
 
 # LangGraph 运行状态：SQLite 持久化到项目 D 盘，自动清理过旧运行
+knowledge_catalog:
+  db_path: logs/knowledge.sqlite3
+  source_root: examples/ai_engineering
+  allowed_kb_ids: [ai-engineering, python-official]
+  embedding_backend: hashing
+  embedding_model: bge-m3
+  retrieval_mode: hybrid
+  min_score: 0.15
+  top_k: 4
+
+# LangGraph 运行状态
 langgraph:
   checkpoint_path: logs/langgraph_checkpoints.sqlite3
   retention_runs: 100

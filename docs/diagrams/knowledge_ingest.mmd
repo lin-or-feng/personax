@@ -1,0 +1,14 @@
+flowchart TB
+    IN["ingest 相对路径<br/>来源信息"] --> GUARD[Harness 配额与操作检查]
+    GUARD --> JOB[持久化 running 任务]
+    JOB --> READ[根目录边界 路径类型 文件体积检查]
+    READ --> HASH[稳定文档 ID 内容哈希 配置与来源版本]
+    HASH --> SAME{当前 active 版本相同}
+    SAME -->|是| UNCHANGED[事务内复核 revision 并记 unchanged]
+    SAME -->|否| PARSE[按格式解析 清洗 保留页码或行范围]
+    PARSE --> CHUNK[分块 稳定 Chunk ID 有界父上下文]
+    CHUNK --> TX[SQLite 事务 校验预期版本 状态 revision]
+    TX --> COMMIT[原子切换文档与 Chunk 快照 完成任务 写事件]
+    READ -->|失败| FAIL[记录失败 保留旧可用文档]
+    PARSE -->|失败| FAIL
+    TX -->|冲突或写入失败| ROLLBACK[回滚 不暴露半成品]

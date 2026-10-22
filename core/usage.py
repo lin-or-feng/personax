@@ -1,11 +1,11 @@
-"""用量埋点（商用 · 量化数据自动采集）
+"""生成、模型调用和发布的用量记录。
 
 每次生成 / 每次 LLM 调用 / 每次发布，自动追加一行 JSON 到 logs/usage.jsonl。
 - 不依赖任何第三方库
-- 失败静默：埋点出错绝不影响主流程
+- 写入失败不影响主流程
 - 线程本地累加器：一次 run 内多个 Skill 的 token 自动合计
 
-采集到的字段（供简历/技术说明引用）：
+事件字段：
 - gen      单篇生成端到端耗时（topic → 完整草稿）+ 本次 token 合计
 - llm_call 单次模型调用的 prompt_tokens / completion_tokens / 耗时
 - publish  单次发布结果（success / cost_ms / mode）
