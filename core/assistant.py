@@ -1,30 +1,32 @@
-"""PersonaX 2.6 对话 AI 助手编排。
+"""对话助手：兼容原确定性 Workflow，显式启用受控只读检索 Agent。
 
-实现一个受限的 Supervisor-Worker 流程：
-route -> (knowledge_search) -> answer -> review -> checkpoint。
-它刻意只调用一次 LLM，Worker 是职责隔离而非多个模型互相空转。
+Agent 动态执行 decision -> search -> observation 循环；发布审批链不变。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import sqlite3
 import threading
 import time
-from collections.abc import MutableMapping
+from contextlib import aclosing, closing
+from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import yaml
+import anyio
 
 from .assistant_tools import KnowledgeSearchTool
+from .catalog_runtime import catalog_config
 from .context_window import ContextWindow, build_sliding_context_window
 from .agent_runtime import AgentRunBudget
 from .grounding import evaluate_answer_grounding
 from .memory import sanitize_memory_text
 from .harness import Harness, RuleConfig
-from .llm import complete, complete_stream
+from .llm import acomplete, acomplete_stream, close_loop_client, complete, complete_stream
 from .rag import RAGPipeline, build_rag_from_dir, resolve_min_score
 from .tool_gateway import AssistantToolGateway
 from .types import (
@@ -36,6 +38,7 @@ from .types import (
     AssistantThreadSummary,
     ChatMessage,
     RouteDecision,
+    RetrievalAgentConfig,
     ToolCallRequest,
     ToolCallResult,
 )
@@ -79,7 +82,7 @@ class AssistantCheckpointStore:
         checkpoint_id = f"{thread_id}:{int(time.time() * 1000)}"
         payload = json.dumps(
             [message.model_dump() for message in messages], ensure_ascii=False)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 "INSERT OR REPLACE INTO assistant_checkpoints "
                 "(thread_id, messages_json, route, updated_at) VALUES (?, ?, ?, ?)",
@@ -91,7 +94,7 @@ class AssistantCheckpointStore:
     def load(self, thread_id: str) -> list[ChatMessage]:
         if not self.path.exists():
             return []
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT messages_json FROM assistant_checkpoints WHERE thread_id = ?",
                 (thread_id,),
@@ -106,7 +109,7 @@ class AssistantCheckpointStore:
     def delete(self, thread_id: str) -> None:
         if not self.path.exists():
             return
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("DELETE FROM assistant_checkpoints WHERE thread_id = ?", (thread_id,))
             db.commit()
 
@@ -116,7 +119,7 @@ class AssistantCheckpointStore:
         if not self.path.exists():
             return []
         safe_limit = max(1, min(int(limit), 100))
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 "SELECT thread_id, messages_json, route, updated_at "
                 "FROM assistant_checkpoints ORDER BY updated_at DESC LIMIT ?",
@@ -195,7 +198,7 @@ class AssistantMemoryStore:
             now + max(1, min(int(ttl_days), 3650)) * 86400
             if ttl_days is not None else None
         )
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 "INSERT INTO assistant_memories "
                 "(user_id, content, kind, source_thread_id, expires_at, redacted, "
@@ -228,7 +231,7 @@ class AssistantMemoryStore:
         if not self.path.exists():
             return []
         safe_limit = max(1, min(int(limit), 100))
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 "SELECT memory_id, user_id, content, kind, source_thread_id, "
                 "expires_at, redacted, created_at, updated_at "
@@ -249,7 +252,7 @@ class AssistantMemoryStore:
     def delete(self, user_id: str, memory_id: int) -> None:
         if not self.path.exists():
             return
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 "DELETE FROM assistant_memories WHERE user_id = ? AND memory_id = ?",
                 ((user_id or "local_user").strip()[:120], int(memory_id)),
@@ -259,7 +262,7 @@ class AssistantMemoryStore:
     def delete_all(self, user_id: str) -> int:
         if not self.path.exists():
             return 0
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             cursor = db.execute(
                 "DELETE FROM assistant_memories WHERE user_id = ?",
                 ((user_id or "local_user").strip()[:120],),
@@ -331,6 +334,10 @@ class _AssistantTurnState:
     history_dropped: int = 0
     history_tokens: int = 0
     history_truncated: int = 0
+    index_version: str = ""
+    answer_mode: str = "legacy"
+    execution_mode: str = "workflow"
+    stop_reason: str = ""
 
 
 class AssistantResponseStream:
@@ -349,6 +356,28 @@ class AssistantResponseStream:
         self.response = yield from self._service._reply_stream(self._request)
 
 
+class AssistantAsyncResponseStream:
+    """API-owned, single-use stream; close propagates to the model iterator."""
+
+    def __init__(self, service: "AssistantOrchestrator", request: AssistantRequest):
+        self._service = service
+        self._request = request
+        self._iterator: AsyncIterator[str] | None = None
+        self._consumed = False
+        self.response: AssistantResponse | None = None
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        if self._consumed:
+            raise RuntimeError("同一个回答流不能重复消费")
+        self._consumed = True
+        self._iterator = self._service._areply_stream(self._request, self)
+        return self._iterator
+
+    async def aclose(self) -> None:
+        if self._iterator is not None:
+            await self._iterator.aclose()
+
+
 class AssistantOrchestrator:
     """有状态、可审计、最大步数受限的对话编排器。"""
 
@@ -360,6 +389,8 @@ class AssistantOrchestrator:
         rag_pipeline: RAGPipeline | None = None,
         complete_fn: Callable[..., str] = complete,
         stream_complete_fn: Callable[..., Iterator[str]] = complete_stream,
+        astream_complete_fn: Callable[..., AsyncIterator[str]] = acomplete_stream,
+        acomplete_fn: Callable[..., Any] = acomplete,
         checkpoint_store: AssistantCheckpointStore | None = None,
         prompt_path: str | Path = "config/assistant_prompts.yaml",
     ):
@@ -369,8 +400,24 @@ class AssistantOrchestrator:
         self._rag_lock = threading.Lock()
         self.complete_fn = complete_fn
         self.stream_complete_fn = stream_complete_fn
+        self.astream_complete_fn = astream_complete_fn
+        self.acomplete_fn = acomplete_fn
         self.checkpoints = checkpoint_store
         self.prompts = load_assistant_prompts(prompt_path)
+        self.catalog = catalog_config(self.persona)
+
+    def _catalog_pipeline(self, request: AssistantRequest) -> RAGPipeline:
+        from .knowledge import KnowledgeBaseService
+
+        if request.kb_id not in self.catalog.allowed_kb_ids:
+            raise PermissionError("catalog_not_allowed")
+        service = KnowledgeBaseService(self.catalog.db_path, self.catalog.source_root,
+            harness=self.harness)
+        pipeline, _ = service.pipeline(request.kb_id,
+            backend=self.catalog.embedding_backend, model=self.catalog.embedding_model,
+            retrieval_mode=self.catalog.retrieval_mode, vector_store=self.catalog.vector_store,
+            qdrant_path=self.catalog.qdrant_path)
+        return pipeline
 
     def _rag(self) -> RAGPipeline:
         if self._rag_pipeline is None:
@@ -405,6 +452,8 @@ class AssistantOrchestrator:
         return decision.model_copy(update={"router": "llm"})
 
     def _route(self, request: AssistantRequest) -> RouteDecision:
+        if request.knowledge_source == "catalog":
+            return RouteDecision(route="knowledge", reason="显式目录库证据模式", router="manual")
         if not request.use_knowledge:
             return RouteDecision(route="direct", reason="用户关闭本地知识库", router="manual")
 
@@ -526,14 +575,22 @@ class AssistantOrchestrator:
                 {"query": request.question, "step": state.step},
             )
             tool_started = time.perf_counter()
+            rag_pipeline = None
             try:
                 cfg = self.persona.get("rag", {}) or {}
-                rag_pipeline = self._rag()
+                if request.knowledge_source == "catalog":
+                    if not request.use_knowledge:
+                        raise PermissionError("catalog_retrieval_disabled")
+                    rag_pipeline = self._catalog_pipeline(request)
+                    cfg = {"assistant_top_k": self.catalog.top_k, "min_score": self.catalog.min_score}
+                    state.index_version = rag_pipeline.index_version
+                else:
+                    rag_pipeline = self._rag()
                 gateway = AssistantToolGateway(KnowledgeSearchTool(rag_pipeline), self.harness)
                 tool_arguments = {
                     "query": request.question,
                     "top_k": max(1, int(cfg.get("assistant_top_k", 4))),
-                    "min_score": resolve_min_score(cfg, rag_pipeline),
+                    "min_score": self.catalog.min_score if request.knowledge_source == "catalog" else resolve_min_score(cfg, rag_pipeline),
                 }
                 assistant_cfg = self.persona.get("assistant", {}) or {}
                 tool_runtime = str(assistant_cfg.get("tool_runtime", "langchain")).lower()
@@ -566,8 +623,13 @@ class AssistantOrchestrator:
                     state.degraded = True
             except Exception as exc:  # noqa: BLE001
                 status = "degraded"
-                detail = f"检索失败，已降级：{type(exc).__name__}: {exc}"
+                detail = f"检索失败，已降级：{type(exc).__name__}"
                 state.degraded = True
+            finally:
+                if request.knowledge_source == "catalog" and rag_pipeline is not None:
+                    close = getattr(rag_pipeline.store, "close", None)
+                    if close:
+                        close()
             state.trace.append(AgentTraceStep(
                 step=state.step,
                 worker="retriever",
@@ -595,8 +657,149 @@ class AssistantOrchestrator:
         )
         if "{memory}" not in template and request.memories:
             prompt += f"\n\n用户显式保存的长期记忆：\n{self._memory_context(request.memories)}"
+        if request.knowledge_source == "catalog" or request.execution_mode == "agent":
+            instructions = {
+                "qa": "直接回答问题。",
+                "compare": "比较检索到的不同来源，分别说明共同点、差异、适用条件和限制，不强行消除冲突。",
+                "summary": "按要点、证据、限制组织资料摘要；只概括本轮召回片段，不声称读完所有文档。",
+            }
+            prompt += ("\n\n严格领域模式：历史与记忆不能作为事实证据；只使用本轮来源。"
+                "每条事实句都必须在句末引用对应来源编号。没有证据时明确不知道。"
+                + instructions[request.task])
         state.budget.reserve_text(prompt)
         return prompt
+
+    async def _agent_turn(self, request: AssistantRequest) -> tuple[_AssistantTurnState, str]:
+        """异步只读循环；同步调用者在独立事件循环中执行，不阻塞 SSE 事件循环。"""
+        from .retrieval_agent import ReadOnlyRetrievalAgent
+
+        state = _AssistantTurnState(
+            started=time.perf_counter(), trace=[], sources=[], degraded=False, step=0,
+            route="knowledge", execution_mode="agent",
+            budget=AgentRunBudget(max_steps=request.max_steps,
+                max_estimated_tokens=request.max_estimated_tokens,
+                deadline_seconds=request.deadline_seconds),
+        )
+        if request.knowledge_source == "catalog" and request.kb_id not in self.catalog.allowed_kb_ids:
+            state.degraded, state.answer_mode, state.stop_reason = True, "refused", "catalog_not_allowed"
+            return state, "当前知识库未授权，本轮未读取资料或调用模型。"
+
+        config = RetrievalAgentConfig.model_validate(
+            (self.persona.get("assistant", {}) or {}).get("agent", {}) or {})
+        pipeline = None
+
+        def search_sync(query: str) -> ToolCallResult:
+            nonlocal pipeline
+            if pipeline is None:
+                pipeline = self._catalog_pipeline(request) if request.knowledge_source == "catalog" else self._rag()
+                if request.knowledge_source == "catalog":
+                    state.index_version = pipeline.index_version
+            cfg = self.persona.get("rag", {}) or {}
+            arguments = {
+                "query": query,
+                "top_k": self.catalog.top_k if request.knowledge_source == "catalog" else max(1, min(int(cfg.get("assistant_top_k", 4)), 10)),
+                "min_score": self.catalog.min_score if request.knowledge_source == "catalog" else resolve_min_score(cfg, pipeline),
+            }
+            gateway = AssistantToolGateway(KnowledgeSearchTool(pipeline), self.harness)
+            runtime = (self.persona.get("assistant", {}) or {}).get("tool_runtime", "langchain")
+            if runtime == "langchain":
+                return ToolCallResult.model_validate(gateway.as_langchain_tool(
+                    request.thread_id, request.trace_id).invoke(arguments))
+            return gateway.call(ToolCallRequest(name="assistant_knowledge_search",
+                arguments=arguments, user_id=request.thread_id, trace_id=request.trace_id))
+
+        async def search(query: str) -> ToolCallResult:
+            # Wait for synchronous retrieval to unwind before closing its store.
+            # This is not a claim that a Python worker thread can be forcibly killed.
+            return await anyio.to_thread.run_sync(lambda: search_sync(query))
+
+        agent = ReadOnlyRetrievalAgent(request, config, state.budget,
+            decide=self.acomplete_fn, search=search)
+        try:
+            result = await agent.run()
+        finally:
+            if request.knowledge_source == "catalog" and pipeline is not None:
+                close = getattr(pipeline.store, "close", None)
+                if close:
+                    with anyio.CancelScope(shield=True):
+                        await anyio.to_thread.run_sync(close)
+        state.sources, state.trace = result.sources, result.trace
+        state.step, state.stop_reason = len(state.trace), result.stop_reason
+        state.degraded = result.degraded
+        self.harness.audit.write(event="assistant_agent_stop", trace_id=request.trace_id,
+            stop_reason=result.stop_reason, actions=state.budget.steps, sources=len(state.sources))
+        if result.disposition == "clarify":
+            state.answer_mode = "refused"
+            return state, "请补充信息后继续：\n\n" + result.clarification
+        if result.disposition == "refuse":
+            state.answer_mode = "refused"
+            return state, "当前证据不足以形成可核验结论；请补充资料或澄清问题。本轮未生成事实结论。"
+
+        insufficient = not state.sources or (
+            request.task == "compare" and len({s.document_id or s.source for s in state.sources}) < 2)
+        if insufficient and result.stop_reason == "evidence_ready":
+            state.stop_reason = "insufficient_sources"
+            state.degraded = True
+        if result.disposition == "fallback" or insufficient or request.answer_mode == "extractive":
+            answer = self._catalog_extract(request, state, fallback=result.disposition == "fallback")
+            if result.disposition == "fallback":
+                answer = "Agent 已受控停止（" + result.stop_reason + "）；以下仅为已检索证据，不表示任务完整完成。\n\n" + answer
+            return state, answer
+
+        started = time.perf_counter()
+        state.step += 1
+        try:
+            state.budget.consume_step("agent_answer", {"sources": len(state.sources)})
+            state.budget.reserve_text(self.prompts["system"])
+            prompt = self._build_answer_prompt(request, state)
+            available = state.budget.max_estimated_tokens - state.budget.estimated_tokens
+            if available < 64:
+                raise RuntimeError("answer_token_budget")
+            with anyio.fail_after(max(0.001, agent.remaining_seconds())):
+                answer = (await self.acomplete_fn(prompt, system=self.prompts["system"],
+                    temperature=0.3, max_tokens=min(700, available), max_retries=1,
+                    trace_id=request.trace_id)).strip()
+            state.budget.reserve_text(answer)
+            if not answer:
+                raise ValueError("empty_answer")
+            state.answer_mode = "llm_grounded"
+            status, detail = "ok", "mode=agent_buffered"
+        except Exception as exc:
+            state.degraded = True
+            state.stop_reason = "answer_unavailable"
+            answer = self._catalog_extract(request, state, fallback=True)
+            status, detail = "degraded", f"mode=agent_buffered; error_type={type(exc).__name__}"
+        self._append_answer_trace(state, request, answer_started=started, status=status, detail=detail)
+        return state, answer
+
+    @staticmethod
+    def _catalog_extract(request: AssistantRequest, state: _AssistantTurnState,
+                         *, fallback: bool = False) -> str:
+        if not state.sources:
+            state.answer_mode = "refused"
+            state.degraded = True
+            return "当前目录库没有检索到可核验的有效证据；请补充资料、开启检索或澄清问题。本轮未生成事实结论。"
+        if request.task == "compare" and len({s.document_id or s.source for s in state.sources}) < 2:
+            state.answer_mode = "refused"
+            state.degraded = True
+            return "本轮不足两个独立文档来源，无法完成跨文档比较；请补充资料或调整问题。"
+        state.answer_mode = "extractive_fallback" if fallback else "extractive_baseline"
+        heading = {"qa": "原文证据摘录", "compare": "分来源对照证据", "summary": "召回片段摘要材料"}[request.task]
+        text = f"{heading}（摘录模式，不是模型综合生成或语义事实裁决）：\n\n"
+        if fallback:
+            text += "运行已降级或生成结果未通过引用检查，已回退到原文证据。\n\n"
+            state.degraded = True
+        return text + "\n\n".join(f"{source.excerpt} [{source.ref_id}]" for source in state.sources)
+
+    @staticmethod
+    def _catalog_review(request: AssistantRequest, state: _AssistantTurnState, answer: str) -> str:
+        if state.answer_mode != "llm_grounded":
+            return answer
+        report = evaluate_answer_grounding(answer, state.sources)
+        factual = [item for item in report.claims if not item.text.startswith("#")]
+        if not report.cited_claims or any(not item.supported for item in factual):
+            return AssistantOrchestrator._catalog_extract(request, state, fallback=True)
+        return answer
 
     def _append_answer_trace(
         self,
@@ -630,19 +833,28 @@ class AssistantOrchestrator:
         *,
         streamed: bool = False,
     ) -> AssistantResponse:
-        if state.step < request.max_steps:
+        if request.knowledge_source == "catalog" or state.execution_mode == "agent":
+            previous_mode = state.answer_mode
+            answer = self._catalog_review(request, state, answer)
+            if state.execution_mode == "agent" and previous_mode == "llm_grounded" and state.answer_mode != previous_mode:
+                state.stop_reason = "grounding_fallback"
+        if state.step < request.max_steps or state.execution_mode == "agent":
             state.step += 1
-            state.budget.consume_step(
-                "grounding_check",
-                {"sources": len(state.sources), "step": state.step},
-            )
+            if state.execution_mode != "agent":
+                state.budget.consume_step(
+                    "grounding_check",
+                    {"sources": len(state.sources), "step": state.step},
+                )
             review_started = time.perf_counter()
             citation_numbers = [int(value) for value in re.findall(r"\[(\d+)\]", answer)]
             invalid_citations = [
                 value for value in citation_numbers
                 if value < 1 or value > len(state.sources)
             ]
-            if state.sources and not citation_numbers:
+            if request.knowledge_source == "catalog" or state.execution_mode == "agent":
+                review_detail = f"catalog_mode={state.answer_mode}; lexical_baseline_not_semantic_proof"
+                review_status = "degraded" if state.degraded else "ok"
+            elif state.sources and not citation_numbers:
                 answer += "\n\n已参考下方本地资料 [1]。"
                 review_detail = "补充缺失的来源标记"
                 review_status = "degraded"
@@ -723,8 +935,14 @@ class AssistantOrchestrator:
             memories=len(request.memories),
             steps=len(state.trace),
             degraded=state.degraded,
+            knowledge_source=request.knowledge_source,
+            kb_id=request.kb_id if request.knowledge_source == "catalog" else "",
+            index_version=state.index_version,
+            answer_mode=state.answer_mode,
             duration_ms=duration_ms,
             estimated_tokens=state.budget.estimated_tokens,
+            execution_mode=state.execution_mode,
+            stop_reason=state.stop_reason,
         )
         try:
             from .usage import record
@@ -750,15 +968,41 @@ class AssistantOrchestrator:
             trace_id=request.trace_id,
             checkpoint_id=checkpoint_id,
             degraded=state.degraded,
+            execution_mode=state.execution_mode,
+            stop_reason=state.stop_reason,
+            budget_steps=state.budget.steps,
+            estimated_tokens=state.budget.estimated_tokens,
+            knowledge_source=request.knowledge_source,
+            kb_id=request.kb_id if request.knowledge_source == "catalog" else "",
+            index_version=state.index_version,
+            answer_mode=state.answer_mode,
         )
 
     def reply(self, request: AssistantRequest) -> AssistantResponse:
         """非流式兼容入口，供 CLI、评测和既有测试使用。"""
 
+        if request.execution_mode == "agent":
+            try:
+                anyio.from_thread.check_cancelled()
+            except RuntimeError:
+                # CLI/Streamlit has no AnyIO worker portal; own and close its loop client.
+                async def isolated_turn():
+                    try:
+                        return await self._agent_turn(request)
+                    finally:
+                        await close_loop_client()
+                state, answer = asyncio.run(isolated_turn())
+            else:
+                # HTTP sync endpoints run in AnyIO workers: use their parent loop,
+                # preserving the existing per-loop LLM semaphore across requests.
+                state, answer = anyio.from_thread.run(self._agent_turn, request)
+            return self._finalize_turn(request, state, answer)
         state = self._prepare_turn(request)
         if state.step >= request.max_steps:
             answer = "本轮已达到最大执行步数，请缩短问题后重试。"
             state.degraded = True
+            if request.knowledge_source == "catalog":
+                state.answer_mode = "refused"
         else:
             state.step += 1
             state.budget.consume_step(
@@ -766,26 +1010,40 @@ class AssistantOrchestrator:
             )
             answer_started = time.perf_counter()
             try:
-                answer = self.complete_fn(
-                    self._build_answer_prompt(request, state),
-                    system=self.prompts["system"],
-                    temperature=0.3,
-                    max_tokens=700,
-                    max_retries=2,
-                    trace_id=request.trace_id,
-                ).strip()
+                catalog = request.knowledge_source == "catalog"
+                insufficient = not state.sources or (request.task == "compare" and len({s.document_id for s in state.sources}) < 2)
+                if catalog and (request.answer_mode == "extractive" or insufficient):
+                    answer = self._catalog_extract(request, state)
+                else:
+                    answer = self.complete_fn(
+                        self._build_answer_prompt(request, state),
+                        system=self.prompts["system"],
+                        temperature=0.3,
+                        max_tokens=700,
+                        max_retries=2,
+                        trace_id=request.trace_id,
+                    ).strip()
+                    if catalog:
+                        state.answer_mode = "llm_grounded"
                 if not answer:
                     raise ValueError("模型返回空文本")
                 status = "ok"
-                detail = "mode=complete"
+                detail = f"mode={state.answer_mode if catalog else 'complete'}"
             except Exception as exc:  # noqa: BLE001
-                answer = (
+                answer = self._catalog_extract(request, state, fallback=True) if request.knowledge_source == "catalog" else (
                     "本轮模型暂时不可用。你可以确认 Ollama 正在运行后重试；"
                     "检索到的资料仍可在下方来源中查看。"
                 )
                 status = "degraded"
-                detail = f"mode=complete; {type(exc).__name__}: {exc}"
+                detail = f"mode=complete; {type(exc).__name__}"
                 state.degraded = True
+            if request.knowledge_source == "catalog":
+                try:
+                    state.budget.reserve_text(answer)
+                except RuntimeError:
+                    answer = "本轮证据或回答超过预算，请缩短问题或减少召回数量。"
+                    state.answer_mode = "refused"
+                    state.degraded = True
             self._append_answer_trace(
                 state, request, answer_started=answer_started,
                 status=status, detail=detail,
@@ -797,7 +1055,126 @@ class AssistantOrchestrator:
 
         return AssistantResponseStream(self, request)
 
+    def areply_stream(self, request: AssistantRequest) -> AssistantAsyncResponseStream:
+        """Cancellable model generation for the HTTP SSE boundary."""
+
+        return AssistantAsyncResponseStream(self, request)
+
+    async def _areply_stream(
+        self, request: AssistantRequest, stream: AssistantAsyncResponseStream,
+    ) -> AsyncIterator[str]:
+        try:
+            if request.execution_mode == "agent":
+                state, answer = await self._agent_turn(request)
+                await anyio.lowlevel.checkpoint()
+                response = await anyio.to_thread.run_sync(
+                    lambda: self._finalize_turn(request, state, answer))
+                for offset in range(0, len(response.answer), 80):
+                    await anyio.lowlevel.checkpoint()
+                    yield response.answer[offset:offset + 80]
+                stream.response = response
+                return
+            # Existing retrieval/routing is synchronous. Let bounded preparation
+            # finish in a worker before cancellation unwinds; never continue to
+            # generation after that cancellation. Do not block the event loop.
+            state = await anyio.to_thread.run_sync(self._prepare_turn, request)
+            catalog = request.knowledge_source == "catalog"
+            if state.step >= request.max_steps:
+                answer = "本轮已达到最大执行步数，请缩短问题后重试。"
+                state.degraded = True
+                if catalog:
+                    state.answer_mode = "refused"
+                else:
+                    yield answer
+            else:
+                state.step += 1
+                state.budget.consume_step(
+                    "generate_answer", {"route": state.route, "step": state.step},
+                )
+                answer_started = time.perf_counter()
+                pieces: list[str] = []
+                try:
+                    insufficient = not state.sources or (
+                        request.task == "compare"
+                        and len({source.document_id for source in state.sources}) < 2
+                    )
+                    if catalog and (request.answer_mode == "extractive" or insufficient):
+                        answer = self._catalog_extract(request, state)
+                    else:
+                        model_stream = self.astream_complete_fn(
+                            self._build_answer_prompt(request, state),
+                            system=self.prompts["system"], temperature=0.3,
+                            max_tokens=700, max_retries=2, trace_id=request.trace_id,
+                        )
+                        async with aclosing(model_stream):
+                            async for chunk in model_stream:
+                                text = str(chunk)
+                                if text:
+                                    pieces.append(text)
+                                    if not catalog:
+                                        yield text
+                        answer = "".join(pieces).strip()
+                        if catalog:
+                            state.answer_mode = "llm_grounded"
+                    if not answer:
+                        raise ValueError("模型返回空文本")
+                    status, detail = "ok", "mode=async_stream"
+                except Exception as exc:  # cancellation is BaseException, not degradation
+                    state.degraded = True
+                    if catalog:
+                        answer = self._catalog_extract(request, state, fallback=True)
+                    elif pieces:
+                        suffix = "\n\n> 模型输出中断，请重试以获得完整回答。"
+                        yield suffix
+                        answer = "".join(pieces).strip() + suffix
+                    else:
+                        answer = (
+                            "本轮模型暂时不可用。你可以确认 Ollama 正在运行后重试；"
+                            "检索到的资料仍可在下方来源中查看。"
+                        )
+                        yield answer
+                    status, detail = "degraded", f"mode=async_stream; {type(exc).__name__}"
+                if catalog:
+                    try:
+                        state.budget.reserve_text(answer)
+                    except RuntimeError:
+                        answer = "本轮证据或回答超过预算，请缩短问题或减少召回数量。"
+                        state.answer_mode = "refused"
+                        state.degraded = True
+                self._append_answer_trace(
+                    state, request, answer_started=answer_started, status=status, detail=detail,
+                )
+            # A cancellation checkpoint before review/persistence prevents an
+            # interrupted generation being stored as a complete assistant turn.
+            await anyio.lowlevel.checkpoint()
+            response = await anyio.to_thread.run_sync(
+                lambda: self._finalize_turn(request, state, answer, streamed=not catalog),
+            )
+            if catalog:
+                # Preserve strict catalog semantics: review before any claim
+                # reaches the client; this is intentionally buffered output.
+                for offset in range(0, len(response.answer), 80):
+                    await anyio.lowlevel.checkpoint()
+                    yield response.answer[offset:offset + 80]
+            elif response.answer.startswith(answer):
+                suffix = response.answer[len(answer):]
+                if suffix:
+                    yield suffix
+            stream.response = response
+        except (asyncio.CancelledError, GeneratorExit):
+            self.harness.audit.write(
+                event="assistant_stream_cancelled", trace_id=request.trace_id,
+                thread_id=request.thread_id,
+            )
+            raise
+
     def _reply_stream(self, request: AssistantRequest) -> Iterator[str]:
+        if request.knowledge_source == "catalog" or request.execution_mode == "agent":
+            # Do not expose unreviewed domain claims: validate before emitting SSE.
+            response = self.reply(request)
+            for offset in range(0, len(response.answer), 80):
+                yield response.answer[offset:offset + 80]
+            return response
         state = self._prepare_turn(request)
         if state.step >= request.max_steps:
             answer = "本轮已达到最大执行步数，请缩短问题后重试。"
@@ -811,18 +1188,24 @@ class AssistantOrchestrator:
             answer_started = time.perf_counter()
             pieces: list[str] = []
             try:
-                for chunk in self.stream_complete_fn(
+                model_stream = self.stream_complete_fn(
                     self._build_answer_prompt(request, state),
                     system=self.prompts["system"],
                     temperature=0.3,
                     max_tokens=700,
                     max_retries=2,
                     trace_id=request.trace_id,
-                ):
-                    text = str(chunk)
-                    if text:
-                        pieces.append(text)
-                        yield text
+                )
+                try:
+                    for chunk in model_stream:
+                        text = str(chunk)
+                        if text:
+                            pieces.append(text)
+                            yield text
+                finally:
+                    close = getattr(model_stream, "close", None)
+                    if close is not None:
+                        close()
                 answer = "".join(pieces).strip()
                 if not answer:
                     raise ValueError("模型返回空文本")

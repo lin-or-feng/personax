@@ -1,4 +1,4 @@
-"""LLM 客户端：DeepSeek（OpenAI 兼容协议）——商用健壮版
+"""统一模型客户端：Ollama、DeepSeek 与离线后端。
 
 - 环境变量 DEEPSEEK_API_KEY 必填才走真实模型；未设置时返回占位文本（离线演示/测试）
 - openai 库惰性导入：未安装时若设置了 Key，抛出带安装提示的 LLMError
@@ -15,6 +15,8 @@ from collections.abc import AsyncIterator, Iterator, Sequence
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
+
+import anyio
 
 from .async_runtime import AsyncBatchResult, gather_bounded
 from .limits import SlidingWindowRateLimiter
@@ -39,8 +41,7 @@ _load_project_env()
 
 _client: Optional[object] = None
 _CLIENT_BACKEND: str | None = None
-_async_client: Optional[object] = None
-_ASYNC_CLIENT_BACKEND: str | None = None
+_LOOP_CLIENTS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _OpenAI = None
 _RETRYABLE: tuple = ()
 _OVERRIDES: dict = {}   # 运行时覆盖（可视化界面设置后端/模型/温度）
@@ -61,7 +62,7 @@ def configure(*, backend: str | None = None, model: str | None = None,
 
     backend: "ollama"（本地免费）/ "deepseek"（云端）/ "offline"（模板）
     """
-    global _client, _CLIENT_BACKEND, _async_client, _ASYNC_CLIENT_BACKEND
+    global _client, _CLIENT_BACKEND
     if backend is not None:
         normalized_backend = backend.strip().lower()
         if normalized_backend != _OVERRIDES.get("backend"):
@@ -69,8 +70,6 @@ def configure(*, backend: str | None = None, model: str | None = None,
             # Ollama to DeepSeek (or back) must not reuse the previous client.
             _client = None
             _CLIENT_BACKEND = None
-            _async_client = None
-            _ASYNC_CLIENT_BACKEND = None
         _OVERRIDES["backend"] = normalized_backend
     if model is not None:
         _OVERRIDES["model"] = model
@@ -193,13 +192,10 @@ def _get_client():
 
 
 def _get_async_client():
-    """返回与当前后端匹配的 AsyncOpenAI 客户端。"""
+    """客户端按事件循环隔离，避免同步 UI 每轮 asyncio.run 复用已关闭连接池。"""
 
-    global _async_client, _ASYNC_CLIENT_BACKEND, _RETRYABLE
+    global _RETRYABLE
     backend = _backend()
-    if _ASYNC_CLIENT_BACKEND is not None and _ASYNC_CLIENT_BACKEND != backend:
-        _async_client = None
-        _ASYNC_CLIENT_BACKEND = None
 
     if backend == "offline":
         return None
@@ -216,7 +212,11 @@ def _get_async_client():
         if hasattr(_oa, name)
     ) or (Exception,)
 
-    if _async_client is None:
+    loop = asyncio.get_running_loop()
+    with _LIMIT_STATE_LOCK:
+        clients = _LOOP_CLIENTS.setdefault(loop, {})
+        client = clients.get(backend)
+    if client is None:
         if backend == "ollama":
             api_key = "ollama"
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -227,14 +227,23 @@ def _get_async_client():
                 return None
             base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
             timeout = float(os.getenv("DEEPSEEK_TIMEOUT", "30"))
-        _async_client = AsyncOpenAI(
+        client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
             timeout=timeout,
             max_retries=0,
         )
-        _ASYNC_CLIENT_BACKEND = backend
-    return _async_client
+        with _LIMIT_STATE_LOCK:
+            clients[backend] = client
+    return client
+
+
+async def close_loop_client() -> None:
+    """在短生命周期 UI 事件循环关闭之前释放该循环自己的连接池。"""
+    with _LIMIT_STATE_LOCK:
+        clients = _LOOP_CLIENTS.pop(asyncio.get_running_loop(), {})
+    for client in clients.values():
+        await client.close()
 
 
 def _async_limit(value: int | None = None) -> int:
@@ -417,16 +426,19 @@ def complete_stream(
                     max_tokens=max_tokens,
                     stream=True,
                 )
-                for chunk in response_stream:
-                    last_chunk = chunk
-                    choices = getattr(chunk, "choices", None) or []
-                    if not choices:
-                        continue
-                    delta = getattr(choices[0], "delta", None)
-                    content = getattr(delta, "content", None)
-                    if content:
-                        emitted = True
-                        yield str(content)
+                try:
+                    for chunk in response_stream:
+                        last_chunk = chunk
+                        choices = getattr(chunk, "choices", None) or []
+                        if not choices:
+                            continue
+                        delta = getattr(choices[0], "delta", None)
+                        content = getattr(delta, "content", None)
+                        if content:
+                            emitted = True
+                            yield str(content)
+                finally:
+                    response_stream.close()
             _record_usage(model, t0, last_chunk, trace_id=trace_id)
             return
         except _RETRYABLE as exc:
@@ -453,7 +465,10 @@ def _async_request_values(
     else:
         resolved_model = _OVERRIDES.get("model") or model or _default_model()
         resolved_tokens = _OVERRIDES.get("max_tokens") or max_tokens or 1024
-    resolved_temperature = float(_OVERRIDES.get("temperature", temperature))
+    # Caller budgets are ceilings, not suggestions overridden by UI preferences.
+    if max_tokens is not None:
+        resolved_tokens = min(int(resolved_tokens), int(max_tokens))
+    resolved_temperature = 0.0 if temperature == 0.0 else float(_OVERRIDES.get("temperature", temperature))
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -605,16 +620,23 @@ async def acomplete_stream(
                     max_tokens=resolved_tokens,
                     stream=True,
                 )
-                async for chunk in response_stream:
-                    last_chunk = chunk
-                    choices = getattr(chunk, "choices", None) or []
-                    if not choices:
-                        continue
-                    delta = getattr(choices[0], "delta", None)
-                    content = getattr(delta, "content", None)
-                    if content:
-                        emitted = True
-                        yield str(content)
+                try:
+                    async for chunk in response_stream:
+                        last_chunk = chunk
+                        choices = getattr(chunk, "choices", None) or []
+                        if not choices:
+                            continue
+                        delta = getattr(choices[0], "delta", None)
+                        content = getattr(delta, "content", None)
+                        if content:
+                            emitted = True
+                            yield str(content)
+                finally:
+                    # Starlette/AnyIO uses level cancellation: shield the close
+                    # await so cancellation cannot skip connection cleanup.
+                    # The permit is released even if upstream close times out.
+                    with anyio.move_on_after(5, shield=True):
+                        await response_stream.close()
             _record_usage(resolved_model, t0, last_chunk, trace_id=trace_id)
             return
         except _RETRYABLE as exc:

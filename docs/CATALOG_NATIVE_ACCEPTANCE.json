@@ -1,0 +1,17 @@
+{
+  "native_http": true,
+  "auth_rejection": true,
+  "json_sources": true,
+  "sse_token_done": true,
+  "graph_paths": true,
+  "cli_http_same_index_version": true,
+  "outside_refusal": true,
+  "answer_mode": "extractive_baseline",
+  "index_version": "163dc97fff46f465",
+  "sources": [
+    "asyncio-sync.html"
+  ],
+  "model_called": false,
+  "publishing_performed": false,
+  "test_server_stopped_on_exit": true
+}

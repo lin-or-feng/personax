@@ -1,4 +1,4 @@
-"""提示词资产：Skill 生成模板（商用标准——提示词作为可配置资产）
+"""从配置加载 Skill 生成模板。
 
 - 默认模板内置在 DEFAULT_PROMPTS，config/prompts.yaml 可覆盖/扩展（热更新）
 - 模板占位符：{topic} 主题 / {title} 标题 / {persona} 人设摘要 / {rag_context} 知识库参考

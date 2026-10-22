@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 import os
+import fnmatch
 import re
 import subprocess
 import sys
@@ -41,7 +42,7 @@ SECRET_PATTERNS = [
 
 # 敏感文件名（无论内容，只要会被提交就报警）
 SENSITIVE_FILES = {
-    "storage_state.json", "storage_state", ".env", ".env.local", ".env.prod",
+    "storage_state.json", "storage_state*.json", "storage_state", ".env", ".env.*", "secrets.toml",
     "publish_log.json", "eval_results.csv", "*.key", "*.pem", "*.p12", "id_rsa", "id_ed25519",
     "credentials.json", "config.json",
 }
@@ -104,13 +105,9 @@ def _ignored(path: Path, rel: str) -> bool:
 
 def _is_sensitive_name(rel: str) -> bool:
     name = rel.split("/")[-1]
-    for pat in SENSITIVE_FILES:
-        if pat.endswith("*"):
-            if name.endswith(pat[1:]):
-                return True
-        elif name == pat:
-            return True
-    return False
+    if name == ".env.example":
+        return False
+    return any(fnmatch.fnmatch(name, pattern) for pattern in SENSITIVE_FILES)
 
 
 def main() -> int:
@@ -141,8 +138,7 @@ def main() -> int:
                 m = pat.search(data)
                 if m:
                     # 打码展示
-                    val = m.group(0)
-                    masked = val[:7] + "*" * min(10, max(0, len(val) - 7))
+                    masked = "[redacted]"
                     if ignored:
                         yellow.append(f"{rel}  ← 含疑似密钥(已忽略): {masked}")
                     else:

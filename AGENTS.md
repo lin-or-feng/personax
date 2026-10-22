@@ -1,6 +1,6 @@
-# AGENTS.md — PersonaX 编码规范（给 dsh / AI 协作用）
+# PersonaX 开发规范
 
-> 本文件是「约束提示词」。任何 AI（dsh / Claude / Copilot）在本仓库内写代码，必须先读 SPEC.md 再读本文，按规范生成；违反规范的 PR 一律打回。
+修改前先阅读 SPEC.md。新增模块先定义数据契约，提交前执行测试与安全检查。
 
 ## 核心原则
 **规范在前，编码在后。** 不允许"先写代码再补注释/规范"——每新增一个 Skill / 模块，先定义契约（manifest + Schema），再实现。
@@ -16,7 +16,7 @@
 基础设施 (types.py / registry.py / harness.py)
 ```
 - **禁止反向依赖**：`skills/` 不得 import `orchestrator`；`core/llm.py` 不得 import `skills`。
-- **跨层通信只用 `Draft` / `SkillInput` / `ExecutionContext`**：禁止裸 dict 在层间传递（ checkpoint 场景除外，须注明）。
+- **跨层通信使用 types.py 对应契约**：Skill 使用 `Draft` / `SkillInput` / `ExecutionContext`；助手与工具使用各自请求/响应类型，checkpoint 序列化场景须注明。
 - **依赖注入**：Skill 所需的 persona / ctx 通过 `SkillInput.context` 传入，**禁止全局单例读取配置**。
 
 ## Skill 开发规范（强制）
@@ -29,7 +29,7 @@
 ## Persona / 风格
 - 人格配置**只在 `config/persona.yaml`**，代码里不要硬编码"小鹿学姐"等字样。
 - 风格硬约束（`forbidden` / 句长）由 `StyleEnforcer` 统一校验；**业务 Skill 不得自行再做文本清洗**。
-- LLM 调用**统一走 `core/llm.complete()`**，禁止在各 Skill 里直接 new OpenAI client。
+- 模型调用使用 `core/llm.py` 的同步或异步入口，禁止在 Skill 或编排器中自行构造客户端。
 
 ## 管控与合规
 - 所有 Skill 执行**必须经过 Harness 拦截**（allow / quota / sensitive_tool 审批），不允许绕过。
@@ -46,4 +46,4 @@
 - [ ] 无跨层裸 dict、无全局配置读取
 - [ ] LLM 调用走 `core/llm.complete`
 - [ ] 有对应的 `eval_set` 用例 + 打分结果
-- [ ] `python main.py --topic xxx` 端到端跑通
+- [ ] `python main.py generate --topic xxx` DryRun 跑通

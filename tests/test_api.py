@@ -1,6 +1,7 @@
 """PersonaX 2.8 FastAPI / SSE 边界回归。"""
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -34,6 +35,14 @@ class _FakeStream:
         yield "回答。"
         self.response = _response(self.request)
 
+    async def __aiter__(self):
+        for chunk in self:
+            await asyncio.sleep(0)
+            yield chunk
+
+    async def aclose(self):
+        pass
+
 
 class _FakeService:
     def __init__(self, *, fail_reply: bool = False, fail_stream: bool = False):
@@ -47,7 +56,7 @@ class _FakeService:
             raise RuntimeError("不应泄漏的内部详情")
         return _response(request)
 
-    def reply_stream(self, request: AssistantRequest) -> _FakeStream:
+    def areply_stream(self, request: AssistantRequest) -> _FakeStream:
         self.requests.append(request)
         return _FakeStream(request, fail=self.fail_stream)
 
@@ -187,6 +196,7 @@ def test_openapi_exposes_no_publish_route(monkeypatch):
     paths = create_app(lambda: _FakeService()).openapi()["paths"]
     assert set(paths) == {
         "/healthz", "/readyz", "/v1/assistant/reply", "/v1/assistant/stream",
+        "/v1/knowledge/graph",
     }
     assert not any("publish" in path for path in paths)
 

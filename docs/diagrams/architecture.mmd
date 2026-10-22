@@ -1,0 +1,22 @@
+flowchart TB
+    subgraph Access[同源问答入口]
+        UI[Streamlit 助手] --> CHAT[AssistantOrchestrator]
+        API[FastAPI JSON 与 SSE] --> CHAT
+        CLI[knowledge answer] --> CHAT
+        CHAT --> SELECT{显式知识来源}
+        SELECT -->|legacy| DIR[原 Markdown 目录与缓存]
+        SELECT -->|catalog| CURRENT[服务端允许清单与当前有效快照]
+        DIR --> GW[只读工具网关 Harness]
+        CURRENT --> GW
+        GW --> ANSWER[证据摘录 或显式模型生成与检查回退]
+    end
+    subgraph Catalog[文档生命周期与持久化]
+        KCLI[knowledge ingest] --> SERVICE[KnowledgeBaseService 与 Harness]
+        SERVICE --> PARSER[受限读取 MD TXT HTML 文本型 PDF]
+        PARSER --> STORE[(SQLite 当前文档与 Chunk 快照 任务 事件)]
+        SERVICE --> STORE
+        STORE --> CURRENT
+        CURRENT --> ENGINE[BM25 dense kNN RRF]
+        ENGINE --> MEMORY[默认内存向量后端]
+        ENGINE --> QDRANT[可选 Qdrant 本地持久化]
+    end

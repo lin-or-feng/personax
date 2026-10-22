@@ -1,0 +1,111 @@
+{
+  "provider": "Python official documentation",
+  "series": "3.12",
+  "fetched_at": "2026-10-15T10:23:58.871448+00:00",
+  "license_url": "https://docs.python.org/3.12/license.html",
+  "license_notice": "Python documentation PSF License Version 2; code examples additionally 0BSD; see retained PYTHON_LICENSE.html",
+  "changes": "Original UTF-8 HTML retained; extraction removes navigation/script/style for local retrieval.",
+  "independent_domain_evaluation": false,
+  "documents": [
+    {
+      "file": "asyncio-task.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/asyncio-task.html",
+      "title": "asyncio 协程与任务 Task 超时和取消",
+      "sha256": "1984b5740617070394d25cbe75194f7f54af284cbe6a5dd7816527c6be37e1a0",
+      "document_id": "doc-1d411e57711dc00f8102848a",
+      "document_version": "6d9a9129a03026f62927111c8bee7c26eed88594482645618225eb2833cbd19c",
+      "chunk_count": 48,
+      "status": "updated"
+    },
+    {
+      "file": "asyncio-sync.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/asyncio-sync.html",
+      "title": "asyncio 同步 Semaphore Lock Event",
+      "sha256": "a14a8cabf2f7437faa3de0bd67e2b3a45b504e05b9064500ce6ccf5321d4db21",
+      "document_id": "doc-ffcc5e655a1dbad6cba0850d",
+      "document_version": "078a19a2afb9a218fd2bfa4cbb02cf62b9ff918340fbc3f77725594fd127bd21",
+      "chunk_count": 14,
+      "status": "updated"
+    },
+    {
+      "file": "concurrent.futures.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/concurrent.futures.html",
+      "title": "并发执行 Executor Future ThreadPoolExecutor",
+      "sha256": "85e27d3d5c73215bbc91a38538039c88c31e34ec48c5b764382aadd6b3e9bef4",
+      "document_id": "doc-9a344c64af0895a8269c02c5",
+      "document_version": "d6007a025f4f398a5f70f35b5257cce64afc564ebdc09c156174ecffbd288936",
+      "chunk_count": 23,
+      "status": "updated"
+    },
+    {
+      "file": "sqlite3.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/sqlite3.html",
+      "title": "SQLite 数据库事务 autocommit 与参数绑定",
+      "sha256": "5e27d66aca1026c7c17671e73479c5dec54713585ca0a67bc087650e8b2a0577",
+      "document_id": "doc-68a6754bf24d3af40601d53b",
+      "document_version": "f5595e5f3e1482846ba8e65580a8601f42cdd8d521e0ae2e7b392b83384d3add",
+      "chunk_count": 98,
+      "status": "updated"
+    },
+    {
+      "file": "json.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/json.html",
+      "title": "JSON 编解码 dumps loads ensure_ascii",
+      "sha256": "fb31e92da533c402f5207296fa6dd67571060d27d297b861a0fc210f3c577cea",
+      "document_id": "doc-c0f8a58f46a2c2b71249e0b8",
+      "document_version": "41274094ed63cb9fb81da911745c5c2878ac3a1d5beef1b05e8530d8aa5c5969",
+      "chunk_count": 30,
+      "status": "updated"
+    },
+    {
+      "file": "pathlib.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/pathlib.html",
+      "title": "文件系统路径 Path resolve 符号链接",
+      "sha256": "98373672d8e379329cd2753e3954c71edd32f2ec49e2bf3282eba8d846de1e85",
+      "document_id": "doc-ff1b39f4e531176a5e854089",
+      "document_version": "a57ce6125f8b1cb29aaeebeeae176d0e8443c2f8e4077943a75a0cfe1964e9b6",
+      "chunk_count": 63,
+      "status": "updated"
+    },
+    {
+      "file": "logging.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/logging.html",
+      "title": "日志 Logger Handler Formatter",
+      "sha256": "0bb6765e2b4ac801686804f91cc38420388cfe57fc64ad77fdb59e92ffcc0eec",
+      "document_id": "doc-99147241701301ba67543ddd",
+      "document_version": "1e7ee8b3fa2c5c9268656f9c755751648bab5303358f29b77e874141dd18eb2d",
+      "chunk_count": 52,
+      "status": "updated"
+    },
+    {
+      "file": "hashlib.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/hashlib.html",
+      "title": "安全散列 sha256 digest hexdigest",
+      "sha256": "ba11a4ac1638aaf5495bdd36c1f7842d6a0198586dea4c2ff4391431d92884e9",
+      "document_id": "doc-8f3eedb8f3f77d9bdc394b8f",
+      "document_version": "d5212e229c1fa1ad8d2d7c8f70bfea6b5d399f6cdf053f23a6244e7dd6bc4a66",
+      "chunk_count": 38,
+      "status": "updated"
+    },
+    {
+      "file": "contextlib.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/contextlib.html",
+      "title": "上下文管理 contextmanager ExitStack",
+      "sha256": "f80726da2b98f72554ad10bdd1f5468ee2c278c473fb80ed3aff3e4ce0445f10",
+      "document_id": "doc-346199aaee92414998ae1e52",
+      "document_version": "7804729999b96a07a02d9743f599cb7604714fefe29f6d7ee2dc6f7406d88c9c",
+      "chunk_count": 38,
+      "status": "updated"
+    },
+    {
+      "file": "unittest.mock.html",
+      "source_url": "https://docs.python.org/zh-cn/3.12/library/unittest.mock.html",
+      "title": "测试替身 Mock patch MagicMock",
+      "sha256": "21fe279a4016ca34ff8cd11b4ea0123ff85c8514112934674ef17cd751f1a0e3",
+      "document_id": "doc-5f8ef9864714b606c936ac4f",
+      "document_version": "8459d7a31dee157cc2da0150274c4b24f2c9349e93ed137a37f469e2b6860459",
+      "chunk_count": 127,
+      "status": "updated"
+    }
+  ]
+}

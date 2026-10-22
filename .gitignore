@@ -1,7 +1,19 @@
 # 凭据与敏感信息（切勿提交）
 storage_state.json
+storage_state*.json
 *.key
+*.pem
+*.p12
 .env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Local documents and resume assets are not project deliverables.
+/artifacts/
+/tools/*resume*.py
+/docs/JOB_APPLICATION_BRIEF.md
+/docs/PersonaX知识图谱.docx
 
 # 运行时产物
 publish_log.json

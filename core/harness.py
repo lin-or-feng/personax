@@ -1,4 +1,4 @@
-"""Harness：独立规则引擎（对齐商用框架管控层）
+"""Harness：独立规则引擎。
 
 管控维度：allow/deny、quota 限流、sensitive_tool 二次确认、审计日志。
 """
@@ -65,7 +65,7 @@ class Harness:
         return True, "ok"
 
     def check_publish_quota(self, user_id: str | None = None) -> tuple[bool, str]:
-        """真实发布专用限速（与 Skill 调用预算分离，商用核心）"""
+        """真实发布专用限速，与 Skill 调用预算分离。"""
         key = user_id or "anonymous"
         decision = self._publish_limiter.check(key)
         if not decision.allowed:

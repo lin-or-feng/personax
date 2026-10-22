@@ -1,4 +1,6 @@
 {
+  "measured_at": "2026-08-30",
+  "scope": "historical_generation_only_not_current_release_or_publishing_quality",
   "backend": "ollama",
   "model": "qwen2.5:7b",
   "device": "RTX 4060 Ti 8GB (GPU)",
@@ -35,12 +37,6 @@
     ]
   },
   "llm_calls_per_post": 3,
-  "publish": {
-    "dry_total": 5,
-    "dry_success": 5,
-    "dry_success_rate": 100.0,
-    "real_published_log_count": 3
-  },
   "knowledge": {
     "files": 3,
     "cjk_chars": 358,

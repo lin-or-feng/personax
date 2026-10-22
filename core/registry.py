@@ -1,4 +1,4 @@
-"""Skill 注册中心 + 多信号加权路由（对齐商用框架 Skill manifest 标准）"""
+"""Skill 注册中心与多信号加权路由。"""
 from __future__ import annotations
 from typing import Any, Callable
 from .types import SkillInput, SkillOutput

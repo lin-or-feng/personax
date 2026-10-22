@@ -1,0 +1,20 @@
+[
+  {"id":"dev_tasks","split":"development","query":"asyncio create_task 协程 并发任务","sources":["asyncio-task.html"]},
+  {"id":"dev_semaphore","split":"development","query":"Semaphore 信号量 acquire release","sources":["asyncio-sync.html"]},
+  {"id":"dev_executor","split":"development","query":"ThreadPoolExecutor Executor submit Future","sources":["concurrent.futures.html"]},
+  {"id":"dev_transaction","split":"development","query":"sqlite3 autocommit commit rollback 事务控制","sources":["sqlite3.html"]},
+  {"id":"dev_json","split":"development","query":"json dumps ensure_ascii Unicode","sources":["json.html"]},
+  {"id":"dev_path","split":"development","query":"Path resolve 符号链接 路径","sources":["pathlib.html"]},
+  {"id":"dev_logging","split":"development","query":"Logger Handler Formatter 日志","sources":["logging.html"]},
+  {"id":"dev_hash","split":"development","query":"sha256 hexdigest digest 哈希摘要","sources":["hashlib.html"]},
+  {"id":"dev_context","split":"development","query":"contextmanager ExitStack 上下文管理器","sources":["contextlib.html"]},
+  {"id":"dev_mock","split":"development","query":"unittest.mock MagicMock patch mock 对象","sources":["unittest.mock.html"]},
+  {"id":"holdout_cancel","split":"holdout","query":"asyncio CancelledError 取消 任务清理 try finally","sources":["asyncio-task.html"]},
+  {"id":"holdout_sql","split":"holdout","query":"sqlite3 占位符 参数绑定 SQL 注入","sources":["sqlite3.html"]},
+  {"id":"holdout_exception","split":"holdout","query":"contextlib suppress FileNotFoundError 忽略异常","sources":["contextlib.html"]},
+  {"id":"holdout_deadlock","split":"holdout","query":"ThreadPoolExecutor 死锁 Future 等待另一个 Future","sources":["concurrent.futures.html"]},
+  {"id":"holdout_serialization","split":"holdout","query":"JSONEncoder default 自定义 编码 complex","sources":["json.html"]},
+  {"id":"outside1","split":"holdout","query":"UnobtainiumHyperdriveNebula","sources":[]},
+  {"id":"outside2","split":"holdout","query":"请给出北极星幻想王国的官方税率","sources":[]},
+  {"id":"outside3","split":"holdout","query":"MozzarellaPizzaToppingsSecretRecipe","sources":[]}
+]

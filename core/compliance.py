@@ -1,4 +1,4 @@
-"""内容合规引擎（商用级发布前门禁）
+"""发布前的词表合规检查。
 
 小红书/广告法发布红线检测，独立于业务（对齐 Harness 管控思想）：
 - 广告法绝对化用语：最 / 第一 / 国家级 / 顶级 / 唯一 …
@@ -22,7 +22,7 @@ import yaml
 
 from .types import Draft
 
-# 内置兜底词表：即便配置文件缺失也能工作（商用要求 fail-safe）
+# 配置缺失时使用内置兜底词表。
 _BUILTIN = {
     "ad_law": [  # 广告法禁止的绝对化用语（正则变体，避免误伤「最后」「第一，第二」等）
         r"最(好|大|低|高|强|佳|优|新|快|便宜|火爆|受欢迎|值得|划算)",
@@ -172,5 +172,5 @@ class ComplianceEngine:
         return ComplianceReport(ok=len(hits) == 0, hits=hits, checked_chars=checked)
 
     def check_draft(self, draft: Draft) -> ComplianceReport:
-        """对 Draft 全字段做门禁（商用：发布前必检）"""
+        """发布前检查 Draft 全字段。"""
         return self.check(draft.title, draft.body, draft.tags)

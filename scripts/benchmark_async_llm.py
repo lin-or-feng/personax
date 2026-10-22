@@ -159,7 +159,7 @@ def main() -> int:
     parser.add_argument("--tasks", type=int, default=8)
     parser.add_argument("--concurrency", type=int, default=2)
     parser.add_argument("--delay-ms", type=int, default=250)
-    parser.add_argument("--model", default="qwen2.5:3b")
+    parser.add_argument("--model", default="qwen2.5:7b")
     parser.add_argument("--max-tokens", type=int, default=24)
     parser.add_argument("--json-out")
     parser.add_argument("--markdown-out")

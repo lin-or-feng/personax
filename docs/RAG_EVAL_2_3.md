@@ -20,7 +20,7 @@
 
 ```powershell
 & .\.venv\Scripts\python.exe main.py rag-eval --compare --backend hashing `
-  --summary-only --report-md docs\RAG_ABLATION_2_3.md
+  --summary-only --report-md logs\rag_ablation.md
 ```
 
 | 模式 | Recall@5 | 门控 Recall@5 | MRR | 无答案拒检 | P95 |

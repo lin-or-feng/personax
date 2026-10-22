@@ -1,0 +1,50 @@
+{
+  "date": "2026-10-19",
+  "scope": "HTTP SSE disconnect cancellation and model response cleanup",
+  "test_result": {
+    "passed": 239,
+    "skipped": 1,
+    "coverage_percent": 75.79,
+    "coverage_targets": ["core", "publishers"],
+    "coverage_floor_percent": 55,
+    "added_disconnect_cases": 13,
+    "added_async_catalog_review_cases": 3
+  },
+  "release_check": {
+    "exit_code": 0,
+    "duration_seconds": 128.19,
+    "checks": {
+      "full_tests": "passed",
+      "content_compliance": "passed",
+      "secret_scan": "passed",
+      "deterministic_security": "passed",
+      "answer_grounding": "passed",
+      "offline_assistant_regression": "passed",
+      "hashing_hybrid_rag": "passed"
+    }
+  },
+  "verified_scenarios": [
+    "ASGI 2.0 and 2.4 disconnect during upstream connection establishment",
+    "ASGI 2.0 and 2.4 disconnect while waiting for first token",
+    "ASGI 2.0 and 2.4 disconnect between tokens",
+    "server task cancellation",
+    "ASGI send socket errors",
+    "SDK response cleanup on normal completion and retry",
+    "concurrency-one permit reusable by subsequent request",
+    "cancelled generation does not persist a complete assistant turn",
+    "cancelled generation emits neither done nor error and is not retried",
+    "synchronous iterator close reaches SDK response close",
+    "real local TCP client disconnect propagates through real OpenAI SDK to local fake model server",
+    "catalog responses are reviewed before claims are emitted"
+  ],
+  "cli_smoke": {
+    "mode": "offline generation without cover",
+    "exit_code": 0,
+    "publish_result": "not-ready gate blocked; no real publish"
+  },
+  "limitations": [
+    "Remote provider compute cancellation and billing were not tested.",
+    "Running synchronous retrieval or routing work finishes before cancellation unwinds.",
+    "A fully generated answer already in final persistence may finish saving."
+  ]
+}

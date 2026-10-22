@@ -19,6 +19,7 @@ def main() -> int:
         ("完整单元测试", [sys.executable, "-m", "pytest"]),
         ("内容库合规", [sys.executable, "scripts/check_content_compliance.py"]),
         ("密钥与敏感文件", [sys.executable, "scripts/check_secrets.py", "--strict"]),
+        ("公开文件隐私", [sys.executable, "scripts/check_privacy.py", "--strict"]),
         (
             "确定性安全红队",
             [sys.executable, "-m", "eval.security_scorer", "--summary-only"],
@@ -28,6 +29,7 @@ def main() -> int:
             [sys.executable, "-m", "eval.grounding_scorer", "--summary-only"],
         ),
         ("AI 助手离线回归", [sys.executable, "-m", "eval.assistant_scorer"]),
+        ("受控检索 Agent 控制流验收", [sys.executable, "-m", "eval.retrieval_agent_scorer"]),
         (
             "RAG 质量门禁",
             [

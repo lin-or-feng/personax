@@ -1,0 +1,14 @@
+flowchart TB
+    Q[CLI answer 工作台 JSON 或 SSE] --> GUARD[类型契约 服务端库清单 Harness]
+    GUARD --> ACTIVE[按 kb_id 读取当前 active 文档]
+    ACTIVE --> BUILD[构建本次查询的内存检索快照]
+    BUILD --> RETRIEVE[BM25 或 dense 或 hybrid RRF]
+    RETRIEVE --> FILTER[相关性门槛与来源去重]
+    FILTER --> FOUND{有合格证据}
+    FOUND -->|是| MODE{显式回答模式}
+    MODE -->|默认| OUTPUT[原文证据 文档版本 Chunk ID 页或行]
+    MODE -->|llm| MODEL[仅基于本轮证据生成]
+    MODEL --> REVIEW{引用与词法检查}
+    REVIEW -->|通过| SAFE[检查后分块输出]
+    REVIEW -->|不通过或模型失败| OUTPUT
+    FOUND -->|否| EMPTY[拒答 不生成事实结论]

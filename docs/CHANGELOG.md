@@ -1,316 +1,59 @@
-# 更新日志（Changelog）
-
-## v2.8.1（2026-09-24）—— 简中 / English API 文档
-
-### 🌐 文档体验
-- `/` 与 `/docs` 默认跳转到简体中文文档 `/docs/zh-CN`，消除直接访问 8000 端口时的 404 困惑
-- 新增 `/docs/en` 英文文档以及对应的 `/openapi/zh-CN.json`、`/openapi/en.json` 规范入口
-- 简中模式翻译接口用途、参数说明和错误含义；路径、JSON 字段、HTTP/SSE 技术名词保持英文，方便复制调用
-- 文档顶部提供显式语言切换；Swagger UI 内置按钮保留原始英文，避免不准确汉化
-
-### ✅ 验证
-- 新增默认跳转、双语页面、双语 OpenAPI、未知语言 404 与无发布路由回归；完整单测 159 项通过
-- 七道发布门禁通过：内容合规、敏感信息扫描、安全红队、回答支持度、助手回归与 RAG 质量均无回归
-
-## v2.8.0（2026-09-24）—— 安全 JSON / SSE 服务边界
-
-### 🌐 FastAPI 服务层
-- 新增 `api.py` 应用工厂与单进程共享 `AssistantOrchestrator`，提供 `/healthz`、`/readyz`、JSON 回复和 SSE 真流式接口
-- SSE 逐块输出 `token` 事件，结束时输出完整 `AssistantResponse` 的 `done` 事件；响应头同步返回服务端 `X-Trace-ID`
-- 原生入口使用显式前台 Uvicorn 命令，不新增隐藏启动、自启动或开机常驻脚本
-
-### 🛡️ 接口与并发边界
-- 新增严格 `AssistantAPIRequest`：客户端不能伪造 Trace，历史/记忆/线程名/预算/超时在进入编排层前受限，未知字段直接拒绝
-- 可选 `PERSONAX_API_TOKEN` Bearer 鉴权采用常量时间比较；API 不注册发布路由，容器固定 `XHS_REAL_PUBLISH_ENABLED=0`
-- 新增 API 实例级滑动窗口，客户端无法通过更换 `thread_id` 绕过；超限返回 429 与 `Retry-After`
-- 同步 LLM 由 ASGI 线程池承载；共享 Harness 保留进程内滑动窗口，RAG 首次构建增加互斥锁，避免并发首请求重复建索引
-- 明确固定单 Uvicorn Worker；不声称已完成 Redis、多进程共享限流、公网账号体系或 SSE 断线续传
-
-### 📦 Docker 与验证
-- Docker 镜像加入 FastAPI/Uvicorn 固定版本，Compose 新增可选 `api` profile，默认仅绑定 `127.0.0.1:8000`
-- `personax:2.8.0` 最终代码状态实机构建并通过容器健康、JSON/SSE/429 冒烟；API `Restart=no`，非 root、只读根文件系统、能力收敛继续生效
-- 单元测试增至 156 项；验证使用离线 LLM，不执行真实发布
-
-## v2.7.0（2026-09-24）—— 真实反馈与排序实验闭环
-
-### 👍 用户反馈
-- AI 助手每条带 Trace 回答新增原生点赞/点踩；每个 Trace 幂等保留一条最新反馈
-- 默认只保存评分、Trace、回答哈希和运行元数据，不保存问题或回答正文
-- 负反馈可选择固定原因；只有显式勾选后才保存经常见 PII 掩码的问答摘要和来源定位
-- 状态页展示有帮助率、负反馈、失败原因和待人工标注数量，并可下载评测候选
-- 新增 `main.py feedback` CLI，支持查看聚合或导出候选 JSON
-
-### 📊 检索实验
-- RAG 评测新增二元相关性 NDCG@K 与门控 NDCG@K，支持一个问题对应多个正确来源
-- BM25 / dense / hybrid 及 RRF / Cross-Encoder 消融报告同步展示 NDCG 与 P95
-- 本轮不自动安装或下载 Cross-Encoder；缺少可选依赖时继续显式降级，不冒充模型实测
-
-### 🧱 克制的架构边界
-- 不新增 ANN、Redis、独立数据库服务或多 Agent 并行；当前规模继续使用精确 kNN、SQLite 和单实例 Docker
-- 反馈候选保持 `needs_human_label`，未经人工审核不能直接进入发布门禁
-- 单元测试增至 147 项；不执行真实发布
-
-## v2.6.0（2026-09-24）—— 可信回答与端到端可观测
-
-### 🧭 可信回答
-- 新增答案级事实支持度检查：校验引用编号、对应证据词法重合与明显肯定/否定冲突
-- Reviewer 对未通过的带引用结论标记降级并提示用户展开来源核对，不再把“引用存在”等同于“结论有证据”
-- 新增 16 条支持/不支持固定集，并把 Accuracy 与 unsupported recall 阈值接入发布门禁
-
-### 📈 可观测性
-- `trace_id` 贯通路由 LLM、只读 StructuredTool、回答 LLM 与最终助手回复
-- 工具网关新增不含参数和正文的持久化遥测，记录状态、错误分类、尝试次数、来源数和耗时
-- 新增安全聚合模块与 `main.py telemetry`，输出工具成功率、助手降级率、Token、可配置成本及 LLM/助手/发布 P95
-- Streamlit 状态页新增 Agent 遥测总览、指定 Trace 事件和最近事件；损坏/超长日志行安全跳过并计数
-
-### 🧪 工程边界
-- 云端 Token 单价只从环境变量读取，不硬编码易过期价格；本地 Ollama 可保持 0
-- 遥测不记录提示词、回答正文、检索 query、工具参数或来源正文
-- 词法支持度不替代人工、NLI 或 LLM-as-Judge，避免将离线门禁描述为完整防幻觉能力
-- 单元测试增至 143 项；全部离线测试不执行真实发布
-
-## v2.5.0（2026-09-23）—— 父子检索与记忆治理
-
-### 🔎 RAG
-- Markdown 知识库升级为标题感知 Parent-Child Chunk：子块参与 BM25 / dense kNN / RRF / Cross-Encoder，生成阶段展开完整父段
-- chunk 元数据新增文档版本、索引版本、父段 ID/标题；RAG trace 新增切块策略与索引版本
-- 新索引完整构建后才原子加入进程缓存；失败实例不缓存，embedding 服务恢复后可重建
-- 新增 `--compare-reranker` 与 `--flat-chunks` 消融入口；Cross-Encoder 仍为可选依赖，默认 CI 不下载模型
-
-### 🧠 记忆
-- 长期记忆新增 `preference/summary` 类型、来源 thread、TTL 与脱敏标记
-- 保存前掩码常见手机号、邮箱和身份证号；过期记忆不再注入上下文
-- Streamlit 新增摘要候选、人工编辑确认、JSON 导出和二次确认删除全部
-- 摘要不会自动落库，继续保持用户可控记忆边界
-
-### ✅ 验证
-- hashing 父子 Chunk 与旧固定切块在 120 条集上的 Recall@5、门控 Recall@5、MRR 和负例拒检保持一致
-- 新增索引失败恢复、父子上下文、版本元数据与记忆治理回归
-
-## v2.4.0（2026-09-23）—— 持久化 HITL 与安全运行时
-
-### 🛡️ 发布与运行安全
-- 真实发布增加 LangGraph `interrupt` / `Command(resume)` 持久化审批，SQLite checkpoint 可跨应用重启恢复
-- 草稿指纹、审批用户和状态由 Publisher 后端重新校验；草稿修改自动失效，成功发布后审批转为 `consumed`
-- 活跃审批使用 SQLite 唯一索引防并发重复创建；重复消费返回幂等结果，不再操作平台
-- Agent 新增最大步骤、估算 Token、总超时和重复状态循环检测，统一 `trace_id`
-- 工具异常按业务空结果、校验、权限、超时、不可用、预算和内部错误分类；仅瞬时异常有界重试，工具输出设字符上限
-
-### 🧪 质量门禁
-- 新增 16 条离线安全红队集，覆盖提示词边界、危险 URL、工具白名单与 PII
-- 发布门禁新增确定性红队步骤
-- 新增 GitHub Actions quality gate：编译、全量测试、覆盖率下限和离线发布门禁
-- 单元测试增至 134 项；不执行真实发布
-
-## 未发布（2026-09-23）—— Docker 可复现运行
-
-### 📦 容器化
-- 新增非 root `Dockerfile`、`compose.yaml`、`.dockerignore` 和容器直接依赖版本基线
-- Streamlit 固定监听 `0.0.0.0:8501`，加入 `/_stcore/health` 健康检查
-- SQLite 日志、RAG embedding 缓存、知识库、稿件库和生成封面使用命名卷持久化
-- 容器默认离线模板，零 Key/零模型可启动；可通过 `host.docker.internal` 连接宿主机 Ollama，或在运行时注入 DeepSeek Key
-
-### 🔧 容器兼容修复
-- Ollama 可达性检测不再写死 `127.0.0.1:11434`，改为解析 `OLLAMA_BASE_URL` 的主机与端口，并按端点隔离 5 秒缓存
-- 生成页正确识别 `LLM_BACKEND=offline`，Docker 默认模式不再误选 DeepSeek
-- Docker 构建上下文排除 `.env`、`storage_state.json`、日志、向量缓存和本地测试/简历产物
-- 容器内真实发布安全锁固定关闭；Playwright 有头调试和登录态继续留在 Windows 宿主机
-- 新增 GitHub Actions Docker smoke test：构建镜像、等待健康状态并请求 Streamlit 健康端点
-- 默认端口只绑定 `127.0.0.1`；启用只读根文件系统、非 root、capabilities 全移除、`no-new-privileges`、PID 上限和日志轮转
-- Python 基础镜像与 GitHub Actions checkout 固定到校验过的 digest/SHA；新增 Dependabot 与中文 `SECURITY.md`
-
-### ✅ 验证边界
-- 新增 Compose 安全默认值、敏感文件排除和容器 Ollama 地址解析回归测试
-- Windows 10 + WSL 2.7.14 + Docker Engine 29.8.0 实机完成 `docker compose up -d --build --wait`；容器健康、8501 页面与 `/_stcore/health` 均通过
-- 容器经 `host.docker.internal` 实测调用宿主机 qwen2.5:7b 与 bge-m3 成功，分别完成最小生成和 1024 维向量编码
-- 容器实测以 UID 100 非 root 用户运行，Docker 数据盘落在 `D:\DockerData`；真实发布、有头浏览器和跨机器验收仍不在本轮范围
-
-## v2.3.1（2026-09-21）—— 滑动上下文与双重限流
-
-### 🧠 上下文滑动窗口
-- AI 助手不再只按固定 8 条消息截取历史，改为“最近消息数 + 估算 token + 单条消息上限”三重边界
-- 默认注入最近 8 条、最多约 3000 token、单条最多约 750 token；Checkpoint 仍保留最近 20 条用于页面恢复
-- Answerer Trace 新增实际保留/总消息、估算 token、丢弃数和截断数，便于解释长会话行为
-
-### 🚦 滑动窗口 + Semaphore 双重限流
-- 新增线程安全 `SlidingWindowRateLimiter`，使用 monotonic 时钟、精确事件窗口和 `retry_after`
-- Harness 的 Skill 配额与真实发布配额迁移到独立滑动窗口，避免固定分钟边界出现双倍突发
-- 同步、异步和流式 LLM 的每次真实请求均先经过 RPM 窗口，再占用 Semaphore；重试同样重新计数
-- 同步 Streamlit/CLI 新增线程 Semaphore；异步批次继续共享事件循环级 `asyncio.Semaphore`
-- 联网搜索增加每后端 10 RPM 与并发 2 的双门；忙碌时保持原有空结果降级，不阻塞生成
-- 真实发布新增进程级 `Semaphore(1)`，已有发布运行时立即拒绝第二个浏览器流程
-
-### 📌 边界
-- BM25、RRF、SQLite、Reviewer 等本地轻量步骤不加限流；embedding 继续使用批处理与缓存，避免把计算密集任务误当 I/O 并发
-- 当前限流状态属于单进程；多进程/多机器部署需迁移到 Redis 等共享计数器与分布式锁
-- 本版未登录或调用小红书，未进行真实发布测试
-
----
-
-## v2.2.0（2026-09-16）—— 持久化工作流、节点观测与可复现质量门禁
-
-### ♻️ LangGraph 持久化与可观测性
-- 内容状态图从仅进程内 `MemorySaver` 升级为官方 `SqliteSaver`，checkpoint 写入 `logs/langgraph_checkpoints.sqlite3`
-- 新增最近运行索引与保留策略，默认保存最近 100 次；重启 Streamlit 后仍可查看运行结果
-- 每个 Router、Skill、风格检查和 Ready 节点记录状态、耗时、说明、重试次数与 checkpoint ID
-- Streamlit 生成页展示当次轨迹，状态页新增完成/拦截/异常指标、最近运行表和单次节点详情
-- checkpoint 状态入库前转为 JSON 兼容数据；严格序列化禁用 pickle 和任意 Python 类型加载
-
-### 🛡️ 最终门禁与安全修复
-- 修复风格检查重试耗尽后仍可能残留 `publish_ready=true` 的逻辑漏洞
-- 最终风格门禁失败现在强制写入 `publish_ready=false` 与具体问题
-- CLI 只有在合规检查和发布就绪门禁同时通过后，才会进入 DryRun 或真实 Publisher
-- LangGraph CLI 默认使用唯一 thread ID，避免不同运行误共享旧 checkpoint；也可用 `--thread-id` 显式指定
-
-### 📏 评测与发布验收
-- RAG 评测新增 Recall@K、MRR、P50/P95/最大延迟、降级状态与阈值判定
-- 新增 `main.py rag-eval`，未达到 Recall/MRR 门槛时返回非零退出码
-- 默认 hashing 后端不读取本机 RAG 环境覆盖，保证 CI/离线回归可复现；可显式选择 Ollama `bge-m3` 实测
-- 新增 `scripts/release_check.py`，串联完整单测、稿件合规、密钥扫描、助手回归和 RAG 门禁
-- 单元测试增至 97 项；新增 SQLite checkpoint 持久化/清理、节点 Trace、失败恢复、最终门禁覆盖和 RAG 阈值测试
-
-### 📌 边界
-- 本版没有进行小红书真实发布；只做本地离线生成、门禁拦截、AppTest 和 DryRun 安全验证
-- SQLite saver 面向本地单机与轻量部署；多进程生产环境仍应换共享 checkpoint 后端
-
----
-
-## v2.1.0（2026-09-16）—— LangChain 工具标准化、LangGraph 真实编排与合规加固
-
-### ✨ Agent 与 LangChain 生态
-- AI 助手默认用 LangChain Core `StructuredTool` 调用只读知识检索，工具仍强制通过 Pydantic Schema、Harness 白名单/限流和 AuditLog
-- 修复原 `core/graph.py` 仅有骨架、`router` 不执行 Skill 的问题
-- 新增可运行 `LangGraphOrchestrator`：`StateGraph + RunnableLambda + MemorySaver`，风格校验失败时有界重试
-- CLI 新增 `generate --engine langgraph`；Streamlit 生成页新增 Python / LangGraph 引擎选择
-- 图节点全部复用既有 Skill 与 Harness，不绕过权限、限流和审计
-
-### 🛡️ 合规与安全
-- 修复合规配置中正则变体被错误转义的问题，“最好/最强/第一推荐”等现可正确拦截
-- 自定义词条为无效正则时回退字面匹配，保持 fail-safe
-- 新增 `scripts/check_content_compliance.py`，可在提交/发布前批量扫描 `content_bank`
-- LangGraph 的完成节点不再写入虚假 `published=true`，仅记录 `graph_complete`；真实发布仍归 Publisher 与安全锁
-
-### 🧪 验证
-- LangChain StructuredTool、LangGraph Skill/Harness 执行、checkpoint 语义、合规正则和批量扫描均有回归测试
-- 本版未进行小红书真实发布，仅执行 DryRun 和本地合规验收
-
----
-
-## v1.1.1（2026-09-07）—— 发布前强制校验 AI 声明
-
-### 🛡️ 合规加固
-- **AI 声明强制校验**：`_mark_ai_generated()` 改为返回布尔值 —— 点击「笔记含AI合成内容」后**回读页面确认声明已选中/生效**（`aria-checked` / `aria-selected`、`active/selected/checked/chosen` 类、或选项内勾选子元素），最多重试 3 次
-- **未确认则中止发布**：新增 `AIDeclarationUnconfirmed` 异常；`ai_generated=True` 时若无法确认声明生效，**抛异常中止，不再点击发布按钮**（防止发出未标识 AI 内容被限流/违规）
-- `publish()` 将 `AIDeclarationUnconfirmed` 按「不可重试」处理：立即返回失败 + 截图 `ai_declaration_unconfirmed`，避免反复重开浏览器
-
-### 🐛 修复
-- AI 生成声明「点了就算成功」→ 改为「点击 + 回读校验 + 重试」，确认不到就不发
-- 落实 v1.1.0 已知限制「真实发布需手动验证 AI 标注实际效果」：现在发布前自动校验
-
-### 📌 已知限制
-- 声明选中状态的判定为**启发式**（依赖平台 DOM），平台改版后可能误拦；策略偏严 —— **宁可不发，也不发未标识 AI 的内容**
-
----
-
-## v1.1.0（2026-08-30）—— 发布质量与合规增强 + 量化实测
-
-### ✨ 新功能
-
-**真实发布安全锁**
-- 新增 `XHS_REAL_PUBLISH_ENABLED`（默认 0 关闭）：生成/发布/调度三条路径接入，防止本地调试、账号受限期间误触发真实发布
-- 命令行 `--keep-open-on-failure`：有头模式失败时保留浏览器窗口（关闭才结束），便于排查
-- GUI 发布按钮同样受安全锁控制（未开启时禁用）
-
-**发布质量**
-- 发布按钮像素定位：截图宿主区域、扫描小红书品牌红色块质心，取代硬编码坐标，自适应按钮实际位置/窗口缩放
-- 正文规范化：发布前清理游离的 `#话题` 行 + 压连续空行（规避小红书「不支持连续空行输入」导致正文被截断/吞字）
-- 权限弹窗处理：`new_context` 拒绝定位权限 + 关闭「了解你的位置」等权限浮层
-
-**合规增强**
-- AI 生成标注：发布时自动勾选「笔记含AI合成内容」声明（对齐小红书社区公约 2.0 + 国家《人工智能生成合成内容标识办法》）
-- 社区规范拦截检测：命中「违反社区规范禁止发笔记」时明确报错，不再误报成功
-- 合规引擎命中带位置信息（title/body/tags + 命中原文 + 建议替换词）
-
-**可视化工作台**
-- 合规命中 →「📍 定位」：就地展开编辑面板，命中词 `<mark>` 高亮，改完保存写回草稿
-- 保存后「修改前 → 修改后」diff 高亮（红删绿增）
-- 生成后提示「发布时将标注内容由 AI 生成」
-
-**量化实测与文档**
-- 用量埋点：`core/usage.py` 自动记录 llm_call / gen / publish 三类事件 → `logs/usage.jsonl`
-- 实测数据：5 次本地生成 + 真实发布留痕（单篇 6.9s / ≈1150 token / 干跑 5/5 / 真发 3 次）
-- 文档：`docs/实测数据.md`（含真实发布案例 + 联网开关差异）、`docs/技术说明.json`、`docs/实测数据.json`
-
-### 🐛 修复
-- 「内容被社区规范拦截」被误判为发布成功 → 新增检测并明确报错
-- AI 生成未标注会被限流 → 发布时自动勾选 AI 内容声明
-- 话题标签混入正文 → 联想失败即移除 + 发布前清理游离 `#`
-- 正文与生成不一致 → 压连续空行，规避「不支持连续空行输入」
-- 「了解你的位置」权限弹窗遮挡编辑器 → 拒绝定位权限
-- Streamlit widget 与 Session State 冲突（`e_body_3` 警告）→ 规范 `gen_ts` 刷新
-- bind 计数补齐：合规引擎测试 52→55
-
-### 📌 已知限制
-- AI 生成声明勾选项文案以当前页面为准，页面改版后需复核选择器
-- 真实发布需手动跑一次验证 AI 标注/正文规范化实际效果
-- 其余同 v1.0.0（话题芯片、向量库、单账号、本地模型质量）
-
----
-
-## v1.0.0（2026-08-29）—— 首个正式版
-
-### ✨ 新功能
-
-**内容生成**
-- LLM 双后端 + 模型切换：DeepSeek（云端）/ 本地 Ollama（qwen2.5:3b、7b，免费）；未配 Key 自动探测本地，无可用则离线模板，永不报错
-- 多人格系统（6 个人格：小鹿学姐 / 干货知识风 / 种草测评风 / 旅行探店风 / 情感共鸣风 / 职场进阶风）
-  - 人格含 语气/习惯/开头风格/互动引导/标题风格/适用主题/风格示例
-  - **按主题自动推荐人格**，可手动切换 / 一键回到推荐
-- 提示词资产化：`config/prompts.yaml` 热更新（改文案不动代码）
-- RAG 知识库：`knowledge/*.md`（front-matter 结构化）+ 中文 bigram 主题加权检索 + 相关性门槛防跑题
-- 合规引擎：广告法绝对化用语 / 医疗金融承诺 / 导流话术，发布前自动拦截
-- 内容清洗：去 Markdown 标记、去组合 emoji（①⃣）、限 emoji 数量、去「段一」标签
-
-**真实发布**
-- 上传图文模式（小红书新版发布页默认视频页签，自动切换）
-- 闭合 Shadow DOM 发布按钮自动化（坐标定位点击）
-- 真实成功判定：URL `published=true` / 成功提示 / 真实链接，无证据不报成功
-- 扫码风控处理：有头模式自动等待 App 扫码（120s），扫码完成自动继续
-- 登录态信任标记回写（降低「新设备+扫码」触发频率）
-- 商用管控：发布限流 / 幂等防重复 / 人工审批 / 审计留痕 / 登录态隔离
-
-**多模态 · 封面生成**
-- 5 种本地海报风格：premium（高级暗调）/ minimal（留白极简）/ gradient / split / card
-- **描述驱动**：用户描述封面（如「粉色渐变 可爱风」）→ 自动解析风格/配色生成
-- AI 背景预留：配 SiliconFlow Key 后自动 AI 背景 + 标题叠加，无 Key 回退海报
-
-**联网增强**
-- 生成前抓热点/参考：Bing（免 Key）/ 博查 / Tavily
-- 相关性过滤（结果须含主题片段才注入），失败自动跳过
-
-**可视化工作台（Streamlit 5 页）**
-- 生成编辑 / 内容库定时 / 知识库 / 设置（后端·模型·人格·联网·封面）/ 状态日志
-- 未配 Key 清晰提示；主题占位输入；封面界面预览
-
-**工程与运维**
-- 52 项 pytest 全绿
-- 安全校验：`scripts/check_secrets.py` + git pre-commit 钩子
-- CLI：generate / publish / schedule / login / notes / probe / debug-selectors / personas / eval
-- 文档：README / 开发记录 / 知识图谱（MD + Word）/ 本变更日志
-
-### 🐛 修复
-- 早期「发布成功」误报 → 严格证据判定（published=true）
-- 长文编辑器无发布按钮 → 改走上传图文模式
-- 闭合 Shadow DOM 按钮点不到 → 像素定位坐标点击
-- 隐藏文件输入框 → `state=attached` + `set_input_files`
-- pandas/numpy 不兼容崩溃 → 无 pandas 渲染 + 升级
-- Streamlit session_state 时序错误 → on_click 回调
-- 3b 模型 emoji 垃圾 → 字符清洗 + 提示词约束 + 升级 7b
-- 标题被人格示例带偏 → 标题用精简人格
-- 必应检索跑题 → 主题相关性过滤
-
-### 📌 已知限制
-- 话题「话题芯片」暂未自动添加（标签以 #文本 留正文，可在 App 补加）
-- VectorStore 为内存实现（可换 Milvus/Qdrant）
-- 单账号设计（多账号/并发为后续方向）
-- 本地小模型质量有限（建议配 DeepSeek Key 或升级模型）
+# 更新日志
+
+仅记录影响行为的变更。详细验证集中在 [TEST_RESULTS](TEST_RESULTS.md)，当前用法见 [README](../README.md)。
+
+## 未发布 · 2026-10-22
+
+- 受控检索 Agent：模型根据工具观察选择补查、澄清或结束；仅开放本地知识检索，保留默认 Workflow。
+- 新增行动契约、检索次数/步骤/时间/估算 Token 预算及重复查询保护；无新增证据时仅允许收尾决策。
+- 工作台和 HTTP 可显式选择模式，显示来源、动作统计和停止码。助手使用 Qwen2.5:7b，不再提供 3B 选项。
+- 异步客户端按事件循环隔离，UI 循环退出时关闭连接池；调用方 Token 上限不再被界面偏好放大。
+- 7B 检索和澄清冒烟通过；综合生成触发检查回退。3B 的超时与重复行动记录保留在合并报告，不计为通过。
+- 文档按用途合并，移除重复的逐版本说明、个人投递话术和旧 Word 导出；测试原始数据及失败结论保留。
+- Git 排除简历、个人文档和渲染产物；新增不回显敏感值的隐私检查。启动脚本不再包含个人安装路径或覆盖模型存储设置。
+- 上传前使用系统本地 OCR 复核 7 张公开图片及其元数据；报告不保存识别原文，新增提交使用 GitHub noreply 邮箱。
+
+## 未发布 · 2026-10-19
+
+- SSE 接入可取消模型流，传播客户端断连和发送失败。
+- 显式关闭上游响应、释放并发槽；未完成生成不保存完整对话。
+- 增加 ASGI 2.0/2.4 与真实 loopback TCP 断连测试。
+
+## 未发布 · 2026-10-15
+
+- 文档目录库支持 MD/TXT/HTML/文本 PDF、稳定身份、内容版本、事务更新/软删除与遗留任务核查。
+- 目录库接入 CLI、助手、FastAPI 和工作台；默认摘录，显式生成时检查并回退。
+- 增加 Qdrant 本地持久化适配、带来源版本的实体共现关系和两跳查询。
+- 10 份官方文档解析为 531 个 Chunk；保留来源许可。新 Docker 尚未验收。
+
+## 2.8.1 · 2026-09-24
+
+- 简中/英文 OpenAPI 文档、默认文档跳转和本地化说明。
+
+## 2.8
+
+- FastAPI JSON/SSE、服务端 Trace、可选 Bearer Token、实例级 RPM 与单 Worker 部署。
+- 历史 Docker 离线镜像验证，容器内关闭发布。
+
+## 2.7
+
+- 反馈默认仅保存评分和运行元数据，显式同意后保存脱敏摘要。
+- 增加 NDCG 与重排对照，不自动启用重排模型。
+
+## 2.6
+
+- 引用支持度检查、来源不足提示、Trace 与工具/Token/延迟统计。
+
+## 2.4–2.5
+
+- 有界重试、错误分类、发布审批与幂等状态。
+- 标题感知分块、文档版本、显式记忆与上下文预算。
+
+## 2.3–2.3.1
+
+- BM25、dense 精确 kNN、RRF 和来源级回归评测。
+- Semaphore 与滑动窗口 RPM，分别限制在途请求和启动频率。
+
+## 更早版本
+
+- 人格提示词、内容 Skill、合规词表、Playwright 发布与调度基础。

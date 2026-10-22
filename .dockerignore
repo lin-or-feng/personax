@@ -15,7 +15,13 @@ dist
 .env.*
 !.env.example
 storage_state.json
+storage_state*.json
 *.key
+*.pem
+*.p12
+.streamlit/secrets.toml
+docs/JOB_APPLICATION_BRIEF.md
+docs/上下文摘要.md
 
 # Runtime state is persisted with Compose volumes instead.
 logs

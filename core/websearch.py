@@ -6,7 +6,7 @@
 - tavily Tavily 搜索（需 TAVILY_API_KEY，免费额度）
 - off    关闭
 
-开关：WEB_SEARCH_ENABLED=1 开启；未开启或失败一律返回空，绝不影响生成主流程。
+开关：WEB_SEARCH_ENABLED=1 开启；未开启或请求失败时返回空上下文。
 
 用法：
     from core.websearch import search_web, build_web_context
