@@ -70,6 +70,76 @@ class AssistantSource(BaseModel):
     line_start: int | None = None
     line_end: int | None = None
     section: str = ""
+    extraction_method: Literal["native", "ocr"] = "native"
+    bounding_box: tuple[float, float, float, float] | None = None
+    ocr_confidence: float | None = None
+    quality_flags: list[str] = Field(default_factory=list)
+    ocr_engine: str = ""
+    ocr_model_fingerprint: str = ""
+    ocr_reviewed: bool = False
+    human_edited: bool = False
+
+
+class DocumentParseOptions(BaseModel):
+    """Local operator options. Never exposed as model-selected tool arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+    ocr_enabled: bool = False
+    force_ocr: bool = False
+    model_root: str = ""
+    worker_python: str = ""
+    timeout_seconds: float = Field(default=120, ge=1, le=600, allow_inf_nan=False)
+    min_confidence: float = Field(default=0.85, ge=0, le=1, allow_inf_nan=False)
+    render_dpi: int = Field(default=150, ge=72, le=200)
+    max_page_pixels: int = Field(default=12_000_000, ge=100_000, le=20_000_000)
+    max_total_pixels: int = Field(default=60_000_000, ge=100_000, le=100_000_000)
+
+    @model_validator(mode="after")
+    def validate_ocr(self):
+        if self.force_ocr and not self.ocr_enabled:
+            raise ValueError("force_ocr_requires_ocr")
+        return self
+
+
+class OCRBlock(BaseModel):
+    """Box in [0,1], origin top-left of the displayed page; not PDF user-space."""
+
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=12_000)
+    bounding_box: tuple[float, float, float, float]
+    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_box(self):
+        import math
+        x0, y0, x1, y1 = self.bounding_box
+        if not all(math.isfinite(v) and 0 <= v <= 1 for v in self.bounding_box) or x0 >= x1 or y0 >= y1:
+            raise ValueError("invalid_ocr_box")
+        if not self.text.strip():
+            raise ValueError("empty_ocr_block")
+        return self
+
+
+class OCRPageResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    page: int = Field(ge=1, le=100)
+    blocks: list[OCRBlock] = Field(default_factory=list, max_length=2_000)
+    blank: bool = False
+    engine: str = Field(min_length=1, max_length=100)
+    model_fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_blank(self):
+        if self.blank and self.blocks:
+            raise ValueError("blank_with_blocks")
+        return self
+
+
+class DocumentPageReport(BaseModel):
+    page: int = Field(ge=1, le=100)
+    method: Literal["native", "ocr", "blank"]
+    block_count: int = Field(default=0, ge=0)
+    quality_flags: list[str] = Field(default_factory=list)
 
 
 class KnowledgeImportRequest(BaseModel):
@@ -81,6 +151,7 @@ class KnowledgeImportRequest(BaseModel):
     title: str = Field(default="", max_length=300)
     source_url: str = Field(default="", max_length=2_048)
     license: str = Field(default="", max_length=300)
+    accept_ocr_review: bool = False
 
 
 class KnowledgeUnit(BaseModel):
@@ -91,6 +162,79 @@ class KnowledgeUnit(BaseModel):
     page: int | None = None
     line_start: int | None = None
     line_end: int | None = None
+    extraction_method: Literal["native", "ocr"] = "native"
+    bounding_box: tuple[float, float, float, float] | None = None
+    ocr_confidence: float | None = None
+    quality_flags: list[str] = Field(default_factory=list)
+    ocr_engine: str = ""
+    ocr_model_fingerprint: str = ""
+    ocr_reviewed: bool = False
+    human_edited: bool = False
+
+
+class DocumentParseResult(BaseModel):
+    units: list[KnowledgeUnit] = Field(default_factory=list)
+    pages: list[DocumentPageReport] = Field(default_factory=list)
+
+    @property
+    def requires_review(self) -> bool:
+        return any(unit.extraction_method == "ocr" for unit in self.units)
+
+
+class KnowledgeReviewedParse(BaseModel):
+    """Server-owned prepared parse. Never accepted directly from an HTTP client."""
+    model_config = ConfigDict(extra="forbid")
+    content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    parser_version: str
+    expected_revision: int = Field(ge=0)
+    parsed: DocumentParseResult
+
+
+class WorkspaceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    root: str = "logs/workspace"
+    kb_id: str = "workspace"
+    parse_options: DocumentParseOptions = Field(default_factory=DocumentParseOptions)
+    max_jobs: int = Field(default=100, ge=1, le=500)
+    storage_budget_bytes: int = Field(default=256 * 1024 * 1024, ge=10 * 1024 * 1024)
+    lease_seconds: int = Field(default=900, ge=120, le=3600)
+
+
+class WorkspaceJob(BaseModel):
+    job_id: str
+    filename: str
+    content_hash: str
+    status: Literal["queued", "parsing", "awaiting_review", "queued_commit", "committing", "completed", "failed", "cancelled"]
+    revision: int = Field(ge=1)
+    created_at: float
+    updated_at: float
+    preview_hash: str = ""
+    page_count: int = 0
+    unit_count: int = 0
+    reason: str = ""
+    document_id: str = ""
+    document_version: str = ""
+
+
+class WorkspacePreview(BaseModel):
+    job: WorkspaceJob
+    parsed: DocumentParseResult
+
+
+class WorkspaceReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    preview_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class WorkspaceTextEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    unit_index: int = Field(ge=0, le=1999)
+    text: str = Field(min_length=1, max_length=500_000)
+
+
+class WorkspaceEditRequest(WorkspaceReviewRequest):
+    edits: list[WorkspaceTextEdit] = Field(min_length=1, max_length=2000)
 
 
 class KnowledgeChunk(KnowledgeUnit):
@@ -113,6 +257,7 @@ class KnowledgeDocument(BaseModel):
     chunks: list[KnowledgeChunk] = Field(default_factory=list)
     updated_at: float = 0.0
     revision: int = Field(default=0, ge=0)
+    page_reports: list[DocumentPageReport] = Field(default_factory=list)
 
 
 class KnowledgeImportResult(BaseModel):

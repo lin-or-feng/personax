@@ -399,16 +399,27 @@ def cmd_knowledge(args):
     """本机操作者入口；不增加 HTTP 上传或发布权限。"""
     from core.knowledge import KnowledgeBaseService
     from pathlib import Path
-    from core.types import KnowledgeImportRequest, KnowledgeSearchRequest
+    from core.types import DocumentParseOptions, KnowledgeImportRequest, KnowledgeSearchRequest
 
     try:
-        service = KnowledgeBaseService(args.db, args.source_root, chunk_size=args.chunk_size)
+        options = DocumentParseOptions(ocr_enabled=getattr(args, "ocr", False),
+            force_ocr=getattr(args, "force_ocr", False), model_root=getattr(args, "ocr_model_root", ""),
+            worker_python=getattr(args, "ocr_python", ""), timeout_seconds=getattr(args, "ocr_timeout", 120))
+        service = KnowledgeBaseService(args.db, args.source_root, chunk_size=args.chunk_size,
+            parse_options=options)
         if args.action == "ingest":
             result = service.ingest(KnowledgeImportRequest(kb_id=args.kb_id,
-                source_path=args.file, title=args.title, source_url=args.source_url, license=args.license))
+                source_path=args.file, title=args.title, source_url=args.source_url, license=args.license,
+                accept_ocr_review=args.accept_ocr_review))
             print(result.model_dump_json(indent=2))
             if result.status == "failed":
                 raise SystemExit(1)
+        elif args.action == "inspect":
+            from core.document_parser import parse_document_result, read_local_document
+            _, data = read_local_document(Path(args.source_root), args.file)
+            parsed = parse_document_result(data, Path(args.file).suffix, options=options)
+            # Explicit local preview intentionally includes document text; never a log/API tool.
+            print(parsed.model_dump_json(indent=2))
         elif args.action == "search":
             result = service.search(KnowledgeSearchRequest(kb_id=args.kb_id, query=args.query,
                 top_k=args.top_k, min_score=args.min_score), backend=args.backend,
@@ -624,6 +635,15 @@ def main():
     k_ingest.add_argument("--title", default="")
     k_ingest.add_argument("--source-url", default="")
     k_ingest.add_argument("--license", default="")
+    k_ingest.add_argument("--accept-ocr-review", action="store_true", help="已人工核对本次 OCR 正文；不代表自动准确率认证")
+    k_inspect = ksub.add_parser("inspect", help="本地预览解析正文与逐页质量；不提交版本")
+    k_inspect.add_argument("--file", required=True)
+    for command in (k_ingest, k_inspect):
+        command.add_argument("--ocr", action="store_true", help="显式启用本地 CPU OCR")
+        command.add_argument("--force-ocr", action="store_true", help="所有 PDF 页均 OCR；须同时 --ocr")
+        command.add_argument("--ocr-model-root", default=".rag_cache/ocr-models")
+        command.add_argument("--ocr-python", default="", help="可选独立 OCR 虚拟环境的 Python")
+        command.add_argument("--ocr-timeout", type=float, default=120)
     k_search = ksub.add_parser("search", help="原文证据摘录，不自动调用生成模型")
     k_search.add_argument("--query", required=True)
     k_search.add_argument("--top-k", type=int, default=3)

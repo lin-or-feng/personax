@@ -87,3 +87,10 @@ def test_consolidated_diagnostics_keep_failed_runs():
     assert len(report["runs"]) == 5
     assert sum(run["passed"] for run in report["runs"]) == 1
     assert sum(not run["passed"] for run in report["runs"]) == 4
+
+
+def test_owner_contact_is_allowed_only_in_readme():
+    address = "3154433950" + "@qq.com"
+    assert not findings(address, "README.md")
+    assert any(hit["kind"] == "email" for hit in findings(address, "docs/sample.md"))
+    assert any(hit["kind"] == "email" for hit in findings("other" + "@qq.com", "README.md"))

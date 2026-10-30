@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.check_secrets import SECRET_PATTERNS
-TEXT_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ps1", ".cmd",
+TEXT_SUFFIXES = {".ts", ".tsx", ".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ps1", ".cmd",
     ".toml", ".html", ".svg", ".mmd", ".mjs", ".js", ".css", ".ini", ".example"}
 PHONE = re.compile(r"(?<![\dA-Za-z])1[3-9]\d{9}(?![\dA-Za-z])")
 EMAIL = re.compile(r"(?<![\w.-])[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}(?![\w.-])")
@@ -42,6 +42,9 @@ def findings(text: str, path: str) -> list[dict]:
         if any(match.group() not in TEST_PHONES for match in PHONE.finditer(line)):
             kinds.append(("phone", "info" if upstream else "error"))
         for match in EMAIL.finditer(line):
+            # The project owner explicitly authorized this public contact in README only.
+            if path == "README.md" and match.group().lower() == "3154433950" + "@qq.com":
+                continue
             domain = match.group().rsplit("@", 1)[-1].lower()
             if domain not in EXAMPLE_DOMAINS and not domain.endswith((".example", ".invalid", ".test")):
                 kinds.append(("email", "info" if upstream else "error"))

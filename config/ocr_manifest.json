@@ -1,0 +1,14 @@
+{
+  "name": "local_document_ocr",
+  "version": "1",
+  "kind": "operator_only_parser",
+  "input_contract": "DocumentParseOptions + PDF bytes + 1-based page numbers",
+  "output_contract": "list[OCRPageResult]",
+  "engine": "paddleocr-cpu",
+  "permissions": ["read_explicit_document_bytes", "read_verified_local_models"],
+  "network_during_ingest": false,
+  "cloud_ocr": false,
+  "requires_explicit_review_before_indexing": true,
+  "supports": ["printed_zh_en", "single_column", "mixed_pdf", "png", "jpeg"],
+  "not_validated": ["handwriting", "tables", "formulae", "complex_reading_order", "hostile_pdf_sandbox"]
+}

@@ -367,7 +367,7 @@ def test_pdf_blank_page_is_not_reported_as_success():
     import io
     writer = pypdf.PdfWriter(); writer.add_blank_page(width=100, height=100)
     stream = io.BytesIO(); writer.write(stream)
-    with pytest.raises(DocumentError, match="pdf_page_requires_ocr"):
+    with pytest.raises(DocumentError, match="empty_document"):
         parse_document(stream.getvalue(), ".pdf")
 
 
