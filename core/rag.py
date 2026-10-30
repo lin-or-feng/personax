@@ -592,7 +592,11 @@ def build_rag_from_documents(documents, *, embedder: Embedder | None = None,
                     "kb_id": document.kb_id, "document_id": document.document_id,
                     "document_version": document.document_version, "parent_id": chunk.parent_id,
                     "parent_heading": chunk.section, "parent_text": chunk.parent_text,
-                    "page": chunk.page, "line_start": chunk.line_start, "line_end": chunk.line_end}))
+                    "page": chunk.page, "line_start": chunk.line_start, "line_end": chunk.line_end,
+                    "extraction_method": chunk.extraction_method, "bounding_box": chunk.bounding_box,
+                    "ocr_confidence": chunk.ocr_confidence, "quality_flags": chunk.quality_flags,
+                    "ocr_engine": chunk.ocr_engine, "ocr_model_fingerprint": chunk.ocr_model_fingerprint,
+                    "ocr_reviewed": chunk.ocr_reviewed, "human_edited": chunk.human_edited}))
     if pipe.retrieval_mode == "lexical":
         store.chunks.update({chunk.id: chunk for chunk in chunks})
     else:

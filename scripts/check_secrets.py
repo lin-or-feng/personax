@@ -48,7 +48,7 @@ SENSITIVE_FILES = {
 }
 
 # 敏感目录（整目录忽略）
-SENSITIVE_DIRS = {"logs", ".tmp", ".venv", "venv", "__pycache__", ".git", ".idea", ".pytest_cache"}
+SENSITIVE_DIRS = {"logs", ".tmp", ".venv", ".venv-ocr", ".rag_cache", "venv", "__pycache__", ".git", ".idea", ".pytest_cache"}
 
 # 内置忽略前缀（与 .gitignore 保持一致）
 IGNORED_DIR_PREFIX = ("pxtest_", "probe_", "px2_", "pytest-cache-files-")

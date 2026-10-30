@@ -30,7 +30,7 @@ jobs:
           cache: pip
 
       - name: Install project and quality dependencies
-        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+        run: python -m pip install --disable-pip-version-check -e ".[dev,ingest]"
 
       - name: Compile Python sources
         run: python -m compileall -q app.py core publishers eval scripts

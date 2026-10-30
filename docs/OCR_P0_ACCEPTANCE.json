@@ -1,0 +1,146 @@
+{
+  "created_at_utc": "2026-10-28T06:18:11.283712+00:00",
+  "scope": "self_authored_printed_document_engineering_smoke",
+  "independent_quality_benchmark": false,
+  "cloud_ocr": false,
+  "device": "cpu",
+  "source_text_in_report": false,
+  "cer_limit_for_this_fixture_only": 0.2,
+  "passed": true,
+  "cases": 10,
+  "runs": [
+    {
+      "case": "scanned_pdf",
+      "passed": true,
+      "cer_whitespace_normalized": 0.0,
+      "boxes_overlap_source_ink": true,
+      "ocr_blocks": 5,
+      "duration_seconds": 10.953,
+      "pages": [
+        {
+          "page": 1,
+          "method": "ocr",
+          "block_count": 5,
+          "quality_flags": [
+            "layout_unverified",
+            "ocr_unverified"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "mixed_pdf",
+      "passed": true,
+      "cer_whitespace_normalized": 0.0,
+      "boxes_overlap_source_ink": true,
+      "ocr_blocks": 5,
+      "duration_seconds": 7.751,
+      "pages": [
+        {
+          "page": 1,
+          "method": "native",
+          "block_count": 1,
+          "quality_flags": []
+        },
+        {
+          "page": 2,
+          "method": "ocr",
+          "block_count": 5,
+          "quality_flags": [
+            "layout_unverified",
+            "ocr_unverified"
+          ]
+        },
+        {
+          "page": 3,
+          "method": "blank",
+          "block_count": 0,
+          "quality_flags": []
+        }
+      ]
+    },
+    {
+      "case": "rotated_pdf",
+      "passed": true,
+      "cer_whitespace_normalized": 0.0,
+      "boxes_overlap_source_ink": true,
+      "ocr_blocks": 5,
+      "duration_seconds": 7.679,
+      "pages": [
+        {
+          "page": 1,
+          "method": "ocr",
+          "block_count": 5,
+          "quality_flags": [
+            "layout_unverified",
+            "ocr_unverified"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "scanned_png",
+      "passed": true,
+      "cer_whitespace_normalized": 0.0,
+      "boxes_overlap_source_ink": true,
+      "ocr_blocks": 5,
+      "duration_seconds": 7.762,
+      "pages": [
+        {
+          "page": 1,
+          "method": "ocr",
+          "block_count": 5,
+          "quality_flags": [
+            "layout_unverified",
+            "ocr_unverified"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "scanned_jpg",
+      "passed": true,
+      "cer_whitespace_normalized": 0.0,
+      "boxes_overlap_source_ink": true,
+      "ocr_blocks": 5,
+      "duration_seconds": 7.685,
+      "pages": [
+        {
+          "page": 1,
+          "method": "ocr",
+          "block_count": 5,
+          "quality_flags": [
+            "layout_unverified",
+            "ocr_unverified"
+          ]
+        }
+      ]
+    },
+    {
+      "case": "unreviewed_update_preserves_previous",
+      "passed": true
+    },
+    {
+      "case": "reviewed_update_search_provenance",
+      "passed": true
+    },
+    {
+      "case": "repeat_import_unchanged",
+      "passed": true
+    },
+    {
+      "case": "real_worker_timeout",
+      "passed": true,
+      "reason": "ocr_timeout",
+      "duration_seconds": 1.093
+    },
+    {
+      "case": "real_worker_pixel_limit",
+      "passed": true,
+      "reason": "ocr_pixel_limit",
+      "duration_seconds": 2.004
+    }
+  ],
+  "engine": "paddleocr-3.7.0/paddle-3.3.1",
+  "model_fingerprint": "1b8b71eb98f0d97c0232c2159a13f8bdeecd9bb3597b7ed5fa9a9ef3e66200b9"
+}

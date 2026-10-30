@@ -39,7 +39,10 @@ htmlcov/
 build/
 dist/
 .venv/
+.venv-ocr/
 venv/
+node_modules/
+/frontend/dist/
 
 # IDE
 .idea/

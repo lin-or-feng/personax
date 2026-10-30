@@ -1,0 +1,6 @@
+# Optional isolated CPU OCR environment. Main application dependencies stay separate.
+paddleocr==3.7.0
+paddlepaddle==3.3.1
+pypdfium2==5.14.0
+pillow==12.3.0
+pydantic==2.14.1

@@ -6,12 +6,12 @@ import json
 from pathlib import Path
 
 from .assistant_tools import KnowledgeSearchTool, sanitize_source_url
-from .document_parser import DocumentError, PARSER_VERSION, parse_document, read_local_document
+from .document_parser import DocumentError, PARSER_VERSION, parse_document_result, read_local_document
 from .harness import Harness
 from .knowledge_store import KnowledgeStore
 from .rag import CachedEmbedder, RAGPipeline, _make_embedder, build_rag_from_documents
 from .types import (
-    KnowledgeChunk, KnowledgeDocument, KnowledgeImportRequest, KnowledgeImportResult,
+    DocumentParseOptions, KnowledgeChunk, KnowledgeDocument, KnowledgeImportRequest, KnowledgeImportResult, KnowledgeReviewedParse,
     KnowledgeSearchInput, KnowledgeSearchRequest, KnowledgeSearchResponse,
 )
 
@@ -22,20 +22,49 @@ def _digest(value: str | bytes) -> str:
 
 class KnowledgeBaseService:
     def __init__(self, db_path: str | Path, source_root: str | Path, *, chunk_size: int = 600,
-                 harness: Harness | None = None):
+                 harness: Harness | None = None, parse_options: DocumentParseOptions | None = None,
+                 ocr_backend=None):
         if not 100 <= chunk_size <= 2_000:
             raise ValueError("chunk_size must be between 100 and 2000")
         self.store = KnowledgeStore(db_path)
         self.source_root = Path(source_root)
         self.chunk_size = chunk_size
         self.harness = harness or Harness()
+        self.parse_options = parse_options or DocumentParseOptions()
+        self.ocr_backend = ocr_backend
 
     def _guard(self, action: str, kb_id: str):
         allowed, _ = self.harness.guard(action, user_id="local:" + kb_id)
         if not allowed:
             raise DocumentError("operation_blocked")
 
-    def ingest(self, request: KnowledgeImportRequest) -> KnowledgeImportResult:
+    def parser_context(self, suffix: str):
+        """Shared policy identity for preparation and reviewed publication."""
+        version = f"{PARSER_VERSION}:chars-{self.chunk_size}"
+        backend = self.ocr_backend
+        if self.parse_options.ocr_enabled and suffix.lower() in {".pdf", ".png", ".jpg", ".jpeg"}:
+            if backend is None:
+                from .local_ocr import LocalPaddleOCR
+                backend = LocalPaddleOCR(self.parse_options)
+            policy = self.parse_options.model_dump(exclude={"model_root", "worker_python"})
+            version += ":ocr-" + _digest(json.dumps([policy, backend.fingerprint], sort_keys=True))
+        return version, backend
+
+    def prepare_review(self, request: KnowledgeImportRequest) -> KnowledgeReviewedParse:
+        """Prepare without indexing. Only a local operator/service may call this."""
+        self._guard("knowledge_ingest", request.kb_id)
+        relative, data = read_local_document(self.source_root, request.source_path)
+        identity = request.source_path.replace("\\", "/")
+        if relative != identity:
+            raise DocumentError("noncanonical_path")
+        document_id = "doc-" + _digest(request.kb_id + "\0" + identity)[:24]
+        previous = self.store.get(request.kb_id, document_id)
+        parser_version, backend = self.parser_context(Path(relative).suffix)
+        parsed = parse_document_result(data, Path(relative).suffix, options=self.parse_options, ocr_backend=backend)
+        return KnowledgeReviewedParse(content_hash=_digest(data), parser_version=parser_version,
+            expected_revision=previous.revision if previous else 0, parsed=parsed)
+
+    def ingest(self, request: KnowledgeImportRequest, *, reviewed_parse: KnowledgeReviewedParse | None = None) -> KnowledgeImportResult:
         self._guard("knowledge_ingest", request.kb_id)
         identity = request.source_path.replace("\\", "/")
         document_id = "doc-" + _digest(request.kb_id + "\0" + identity)[:24]
@@ -49,14 +78,27 @@ class KnowledgeBaseService:
             source_url = sanitize_source_url(request.source_url)
             if request.source_url and source_url != request.source_url:
                 raise DocumentError("invalid_source_url")
-            parser_version = f"{PARSER_VERSION}:chars-{self.chunk_size}"
+            parser_version, backend = self.parser_context(Path(relative).suffix)
+            if reviewed_parse is not None:
+                if (reviewed_parse.content_hash != content_hash or reviewed_parse.parser_version != parser_version
+                        or not request.accept_ocr_review):
+                    raise DocumentError("review_stale")
+                parser_version += ":review-" + _digest(reviewed_parse.parsed.model_dump_json())
             version = _digest(json.dumps([content_hash, parser_version, request.title,
                 source_url, request.license], ensure_ascii=False))
             if previous and previous.status == "active" and previous.document_version == version:
                 self.store.confirm_unchanged(job_id, previous)
                 return KnowledgeImportResult(job_id=job_id, document_id=document_id,
                     status="unchanged", document_version=version, chunk_count=len(previous.chunks))
-            units = parse_document(data, Path(relative).suffix)
+            if reviewed_parse is not None:
+                if reviewed_parse.expected_revision != (previous.revision if previous else 0):
+                    raise DocumentError("review_stale")
+                parsed = reviewed_parse.parsed
+            else:
+                parsed = parse_document_result(data, Path(relative).suffix, options=self.parse_options, ocr_backend=backend)
+            if parsed.requires_review and not request.accept_ocr_review:
+                raise DocumentError("ocr_review_required")
+            units = parsed.units
             title = request.title or next((u.section for u in units if u.section), Path(relative).stem)
             chunks = []
             for unit_index, unit in enumerate(units):
@@ -82,7 +124,12 @@ class KnowledgeBaseService:
                         parent_id=parent_id,
                         parent_text=unit.text[max(0, offset - 300):min(len(unit.text), end_offset + 300)],
                         text=part,
-                        section=unit.section, page=unit.page, line_start=start, line_end=end))
+                        section=unit.section, page=unit.page, line_start=start, line_end=end,
+                        extraction_method=unit.extraction_method, bounding_box=unit.bounding_box,
+                        ocr_confidence=unit.ocr_confidence, quality_flags=unit.quality_flags,
+                        ocr_engine=unit.ocr_engine, ocr_model_fingerprint=unit.ocr_model_fingerprint,
+                        ocr_reviewed=unit.extraction_method == "ocr" and request.accept_ocr_review,
+                        human_edited=unit.human_edited))
                     if len(chunks) > 2_000:
                         raise DocumentError("too_many_chunks")
                     offset = end_offset
@@ -91,7 +138,7 @@ class KnowledgeBaseService:
             document = KnowledgeDocument(kb_id=request.kb_id, document_id=document_id,
                 document_version=version, source_path=relative, title=title,
                 source_url=source_url, license=request.license, content_hash=content_hash,
-                parser_version=parser_version, chunks=chunks)
+                parser_version=parser_version, chunks=chunks, page_reports=parsed.pages)
             self.store.publish(job_id, document, previous)
             return KnowledgeImportResult(job_id=job_id, document_id=document_id,
                 status="updated" if previous else "created", document_version=version, chunk_count=len(chunks))

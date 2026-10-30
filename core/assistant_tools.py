@@ -109,6 +109,12 @@ class KnowledgeSearchTool:
                 line_start=metadata.get("line_start"),
                 line_end=metadata.get("line_end"),
                 section=str(metadata.get("parent_heading") or ""),
+                extraction_method=metadata.get("extraction_method", "native"),
+                bounding_box=metadata.get("bounding_box"), ocr_confidence=metadata.get("ocr_confidence"),
+                quality_flags=metadata.get("quality_flags", []), ocr_engine=metadata.get("ocr_engine", ""),
+                ocr_model_fingerprint=metadata.get("ocr_model_fingerprint", ""),
+                ocr_reviewed=metadata.get("ocr_reviewed", False),
+                human_edited=metadata.get("human_edited", False),
             ))
         trace = dict(self.pipeline.last_trace)
         trace.update(min_score=inp.min_score, returned=len(sources))

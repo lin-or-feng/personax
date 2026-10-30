@@ -1,0 +1,13 @@
+{
+  "name": "local_document_workspace",
+  "version": "1",
+  "kind": "authenticated_operator_ui",
+  "input_contract": ["WorkspaceConfig", "WorkspaceReviewRequest", "WorkspaceEditRequest"],
+  "output_contract": ["WorkspaceJob", "WorkspacePreview", "AssistantResponse"],
+  "scope": "single_local_operator",
+  "permissions": ["bounded_upload", "private_preview", "explicit_review_commit", "read_only_qa"],
+  "model_selected_tool": false,
+  "publishing": false,
+  "browser_secret_storage": "memory_only",
+  "default_enabled": false
+}

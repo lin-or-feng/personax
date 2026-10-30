@@ -286,6 +286,7 @@ def _docs_navigation(language: str) -> str:
 
 def create_app(
     service_factory: Callable[[], AssistantService] | None = None,
+    *, workspace_service_factory=None,
 ) -> FastAPI:
     """应用工厂；模型服务延迟初始化，健康检查不会触发模型加载。"""
 
@@ -503,6 +504,9 @@ def create_app(
             },
         )
 
+    if os.getenv("PERSONAX_WORKSPACE_ENABLED", "0") == "1" or workspace_service_factory is not None:
+        from workspace_api import add_workspace_routes
+        add_workspace_routes(app, workspace_service_factory)
     return app
 
 

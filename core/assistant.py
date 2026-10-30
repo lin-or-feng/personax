@@ -393,6 +393,7 @@ class AssistantOrchestrator:
         acomplete_fn: Callable[..., Any] = acomplete,
         checkpoint_store: AssistantCheckpointStore | None = None,
         prompt_path: str | Path = "config/assistant_prompts.yaml",
+        catalog_override=None,
     ):
         self.persona = persona or {}
         self.harness = harness or Harness(RuleConfig(**self.persona.get("harness", {})))
@@ -404,7 +405,7 @@ class AssistantOrchestrator:
         self.acomplete_fn = acomplete_fn
         self.checkpoints = checkpoint_store
         self.prompts = load_assistant_prompts(prompt_path)
-        self.catalog = catalog_config(self.persona)
+        self.catalog = catalog_override or catalog_config(self.persona)
 
     def _catalog_pipeline(self, request: AssistantRequest) -> RAGPipeline:
         from .knowledge import KnowledgeBaseService
